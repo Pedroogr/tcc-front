@@ -1,21 +1,38 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { ChangeEvent, FormEvent } from 'react';
 import './App.css';
 import { login, register } from './api/authApi';
-import { createAuction, listAuctions } from './api/auctionsApi';
-import { authStorage } from './api/http';
-import { createLot, listLots } from './api/lotsApi';
+import { createAuction, listAuctions, listPublicAuctions } from './api/auctionsApi';
+import {
+  registerAuctionHouseWithInvite,
+  validateAuctionHouseInvite,
+} from './api/auctionHousesApi';
+import { apiUrl, authStorage } from './api/http';
+import { createLot, listLots, updateLot } from './api/lotsApi';
 import { upsertSellerProfile } from './api/usersApi';
 import type { Auction } from './types/auction';
 import type { CreateAuctionPayload } from './types/auction';
-import type { CreateLotPayload, Lot } from './types/lot';
+import type { CreateLotPayload, Lot, LotImagePayload } from './types/lot';
 import type {
   AuctionHouse,
+  CreateAuctionHouseInvitePayload,
   CreateSellerProfilePayload,
   CreateUserPayload,
   User,
   UserAccountType,
 } from './types/user';
+import {
+  formatCnpj,
+  formatCpf,
+  formatCpfOrCnpj,
+  formatPhone,
+  generateValidCnpj,
+  generateValidCpf,
+  onlyDigits,
+  validateCnpj,
+  validateCpfOrCnpj,
+  validatePhone,
+} from './utils/brFields';
 
 const emptyLotForm = {
   code: '',
@@ -35,7 +52,6 @@ const emptyAuctionForm = {
   title: '',
   description: '',
   scheduledAt: '',
-  mode: 'LIVE',
 };
 
 const emptyUserForm = {
@@ -55,12 +71,30 @@ const emptySellerProfileForm = {
   country: 'BR',
 };
 
+const emptyAuctionHouseInviteForm = {
+  name: '',
+  document: '',
+  email: '',
+  phone: '',
+  password: '',
+  city: '',
+  state: '',
+  country: 'BR',
+};
+
 type LotFormState = typeof emptyLotForm;
 type AuctionFormState = typeof emptyAuctionForm;
 type UserFormState = typeof emptyUserForm;
 type SellerProfileFormState = typeof emptySellerProfileForm;
+type AuctionHouseInviteFormState = typeof emptyAuctionHouseInviteForm;
 type View = 'home' | 'registerLot' | 'sellerProfile' | 'createAuction' | 'auctionRoom';
 type AuthMode = 'login' | 'register';
+
+type LotImageFormItem = LotImagePayload & {
+  id: string;
+};
+
+const showDevDocumentTools = import.meta.env.DEV;
 
 function toNumber(value: string) {
   return value.trim() === '' ? undefined : Number(value);
@@ -72,6 +106,23 @@ function formatCurrency(value?: string | number | null) {
     currency: 'BRL',
     maximumFractionDigits: 0,
   }).format(Number(value ?? 0));
+}
+
+function resolveMediaUrl(url: string) {
+  if (/^https?:\/\//.test(url)) {
+    return url;
+  }
+
+  return `${apiUrl}${url}`;
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
 }
 
 function getStoredUser() {
@@ -107,6 +158,13 @@ function getStoredAuctionHouse() {
   }
 }
 
+function getOfficeInviteTokenFromPath() {
+  const match = window.location.pathname.match(
+    /^\/(?:cadastro-escritorio|office-register)\/([^/]+)\/?$/,
+  );
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
 function persistUserAuth(accessToken: string, user: User) {
   localStorage.setItem(authStorage.tokenKey, accessToken);
   localStorage.setItem(authStorage.actorTypeKey, 'USER');
@@ -130,27 +188,43 @@ function App() {
   const [lots, setLots] = useState<Lot[]>([]);
   const [auctions, setAuctions] = useState<Auction[]>([]);
   const [lotForm, setLotForm] = useState<LotFormState>(emptyLotForm);
+  const [lotImages, setLotImages] = useState<LotImageFormItem[]>([]);
+  const [detailLotImages, setDetailLotImages] = useState<LotImageFormItem[]>([]);
   const [auctionForm, setAuctionForm] = useState<AuctionFormState>(emptyAuctionForm);
   const [userForm, setUserForm] = useState<UserFormState>(emptyUserForm);
+  const [auctionHouseInviteForm, setAuctionHouseInviteForm] =
+    useState<AuctionHouseInviteFormState>(emptyAuctionHouseInviteForm);
+  const [officeInviteToken, setOfficeInviteToken] = useState(() =>
+    getOfficeInviteTokenFromPath(),
+  );
+  const [isValidatingOfficeInvite, setIsValidatingOfficeInvite] = useState(() =>
+    Boolean(getOfficeInviteTokenFromPath()),
+  );
+  const [officeInviteStatus, setOfficeInviteStatus] = useState<
+    'idle' | 'valid' | 'invalid'
+  >('idle');
+  const [isOfficeInviteEmailLocked, setIsOfficeInviteEmailLocked] = useState(false);
   const [accountType, setAccountType] = useState<UserAccountType>('BUYER');
   const [sellerProfileForm, setSellerProfileForm] = useState<SellerProfileFormState>(
     emptySellerProfileForm,
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingLots, setIsLoadingLots] = useState(false);
+  const [isLoadingAuctions, setIsLoadingAuctions] = useState(false);
   const [error, setError] = useState('');
   const [createdLotId, setCreatedLotId] = useState<string | null>(null);
   const [createdAuctionId, setCreatedAuctionId] = useState<string | null>(null);
   const [createdUserName, setCreatedUserName] = useState<string | null>(null);
   const [selectedAuctionId, setSelectedAuctionId] = useState<string | null>(null);
+  const [selectedLotId, setSelectedLotId] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(() => getStoredUser());
   const [currentAuctionHouse, setCurrentAuctionHouse] = useState<AuctionHouse | null>(() =>
     getStoredAuctionHouse(),
   );
 
-  const featuredLots = useMemo(() => {
-    return lots;
-  }, [lots]);
+  const publicAuctions = useMemo(() => {
+    return auctions.filter((auction) => !['DRAFT', 'CANCELED'].includes(auction.status));
+  }, [auctions]);
 
   const selectableAuctions = useMemo(() => {
     if (!currentAuctionHouse) {
@@ -178,6 +252,64 @@ function App() {
     );
   }, [lots, selectedAuctionId]);
 
+  const selectedLot = useMemo(() => {
+    return selectedAuctionLots.find((lot) => lot.id === selectedLotId) ?? null;
+  }, [selectedAuctionLots, selectedLotId]);
+
+  useEffect(() => {
+    if (!officeInviteToken) {
+      return;
+    }
+
+    let isCanceled = false;
+
+    queueMicrotask(() => {
+      if (isCanceled) {
+        return;
+      }
+
+      setIsValidatingOfficeInvite(true);
+      setOfficeInviteStatus('idle');
+      setError('');
+
+      validateAuctionHouseInvite(officeInviteToken)
+        .then((invite) => {
+          if (isCanceled) {
+            return;
+          }
+
+          setAuctionHouseInviteForm((current) => ({
+            ...current,
+            email: invite.email ?? '',
+          }));
+          setIsOfficeInviteEmailLocked(Boolean(invite.email));
+          setOfficeInviteStatus('valid');
+        })
+        .catch(() => {
+          if (!isCanceled) {
+            setOfficeInviteStatus('invalid');
+          }
+        })
+        .finally(() => {
+          if (!isCanceled) {
+            setIsValidatingOfficeInvite(false);
+          }
+        });
+    });
+
+    return () => {
+      isCanceled = true;
+    };
+  }, [officeInviteToken]);
+
+  function getAuctionLotCount(auction: Auction) {
+    const loadedLots = lots.filter(
+      (lot) => lot.auctionId === auction.id || lot.auction?.id === auction.id,
+    );
+
+    return loadedLots.length || auction.lots?.length || auction._count?.lots || 0;
+  }
+
   async function loadLots() {
     setIsLoadingLots(true);
     setError('');
@@ -191,9 +323,11 @@ function App() {
     }
   }
 
-  async function loadAuctions() {
+  const loadAuctions = useCallback(async (includePrivateAuctions = Boolean(currentAuctionHouse)) => {
+    setIsLoadingAuctions(true);
+
     try {
-      const data = await listAuctions();
+      const data = await (includePrivateAuctions ? listAuctions() : listPublicAuctions());
       setAuctions(data);
       setLotForm((current) => ({
         ...current,
@@ -201,18 +335,117 @@ function App() {
       }));
     } catch {
       setAuctions([]);
+    } finally {
+      setIsLoadingAuctions(false);
     }
-  }
+  }, [currentAuctionHouse]);
 
   useEffect(() => {
     queueMicrotask(() => {
-      void loadLots();
-      void loadAuctions();
+      void loadAuctions(Boolean(currentAuctionHouse));
     });
-  }, []);
+  }, [currentAuctionHouse, loadAuctions]);
 
   function updateLotField(field: keyof LotFormState, value: string) {
     setLotForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function filesToLotImages(files: File[]) {
+    return Promise.all(
+      files.map(async (file) => ({
+        id: `${file.name}-${file.lastModified}-${crypto.randomUUID()}`,
+        fileName: file.name,
+        dataUrl: await readFileAsDataUrl(file),
+      })),
+    );
+  }
+
+  async function handleLotImageChange(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length === 0) {
+      return;
+    }
+
+    try {
+      const images = await filesToLotImages(files);
+      setLotImages((current) => [...current, ...images]);
+      event.target.value = '';
+    } catch {
+      setError('Nao foi possivel carregar as imagens selecionadas.');
+    }
+  }
+
+  function removeLotImage(imageId: string) {
+    setLotImages((current) => current.filter((image) => image.id !== imageId));
+  }
+
+  async function handleDetailLotImageChange(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length === 0) {
+      return;
+    }
+
+    try {
+      const images = await filesToLotImages(files);
+      setDetailLotImages((current) => [...current, ...images]);
+      event.target.value = '';
+    } catch {
+      setError('Nao foi possivel carregar as imagens selecionadas.');
+    }
+  }
+
+  function removeDetailLotImage(imageId: string) {
+    setDetailLotImages((current) => current.filter((image) => image.id !== imageId));
+  }
+
+  async function saveDetailLotImages() {
+    if (!selectedLot || detailLotImages.length === 0) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError('');
+
+    try {
+      await updateLot(selectedLot.id, {
+        images: detailLotImages.map(({ fileName, dataUrl, description }) => ({
+          fileName,
+          dataUrl,
+          description,
+        })),
+      });
+      setDetailLotImages([]);
+      await loadLots();
+    } catch {
+      setError('Nao foi possivel salvar as imagens do lote.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  function renderLotImageInput() {
+    return (
+      <div className="image-upload-field">
+        <label>
+          Imagens do lote
+          <input accept="image/*" multiple type="file" onChange={handleLotImageChange} />
+        </label>
+
+        {lotImages.length > 0 && (
+          <div className="image-upload-list">
+            {lotImages.map((image) => (
+              <div className="image-upload-item" key={image.id}>
+                <img alt="" src={image.dataUrl} />
+                <span>{image.fileName}</span>
+                <button type="button" onClick={() => removeLotImage(image.id)}>
+                  Remover
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
   }
 
   function updateAuctionField(field: keyof AuctionFormState, value: string) {
@@ -223,6 +456,49 @@ function App() {
     setUserForm((current) => ({ ...current, [field]: value }));
   }
 
+  function updateUserPhone(value: string) {
+    setUserForm((current) => ({ ...current, phone: formatPhone(value) }));
+  }
+
+  function updateUserDocument(value: string) {
+    setUserForm((current) => ({ ...current, document: formatCpfOrCnpj(value) }));
+  }
+
+  function fillDevUserCpf() {
+    setUserForm((current) => ({
+      ...current,
+      document: formatCpf(generateValidCpf()),
+    }));
+  }
+
+  function updateAuctionHouseInviteField(
+    field: keyof AuctionHouseInviteFormState,
+    value: string,
+  ) {
+    setAuctionHouseInviteForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateAuctionHouseInvitePhone(value: string) {
+    setAuctionHouseInviteForm((current) => ({
+      ...current,
+      phone: formatPhone(value),
+    }));
+  }
+
+  function updateAuctionHouseInviteDocument(value: string) {
+    setAuctionHouseInviteForm((current) => ({
+      ...current,
+      document: formatCnpj(value),
+    }));
+  }
+
+  function fillDevAuctionHouseCnpj() {
+    setAuctionHouseInviteForm((current) => ({
+      ...current,
+      document: formatCnpj(generateValidCnpj()),
+    }));
+  }
+
   function updateSellerProfileField(field: keyof SellerProfileFormState, value: string) {
     setSellerProfileForm((current) => ({ ...current, [field]: value }));
   }
@@ -230,8 +506,11 @@ function App() {
   function enterAuctionRoom(auctionId: string) {
     setSelectedAuctionId(auctionId);
     setLotForm({ ...emptyLotForm, auctionId });
+    setLotImages([]);
+    setSelectedLotId(null);
     setError('');
     setView('auctionRoom');
+    void loadLots();
   }
 
   async function handleUserSubmit(event: FormEvent<HTMLFormElement>) {
@@ -239,12 +518,21 @@ function App() {
     setIsSubmitting(true);
     setError('');
 
+    const phoneError = validatePhone(userForm.phone);
+    const documentError = validateCpfOrCnpj(userForm.document);
+
+    if (phoneError || documentError) {
+      setError(phoneError || documentError);
+      setIsSubmitting(false);
+      return;
+    }
+
     const payload: CreateUserPayload = {
       name: userForm.name.trim(),
       email: userForm.email.trim(),
       password: userForm.password,
-      phone: userForm.phone.trim() || undefined,
-      document: userForm.document.trim() || undefined,
+      phone: onlyDigits(userForm.phone) || undefined,
+      document: onlyDigits(userForm.document) || undefined,
       accountType,
     };
 
@@ -277,8 +565,7 @@ function App() {
       setUserForm(emptyUserForm);
       setSellerProfileForm(emptySellerProfileForm);
       setAccountType('BUYER');
-      await loadLots();
-      await loadAuctions();
+      await loadAuctions(false);
       setIsAuthenticated(true);
       setView('home');
     } catch {
@@ -319,12 +606,67 @@ function App() {
         setCurrentAuctionHouse(null);
       }
 
-      await loadLots();
-      await loadAuctions();
+      await loadAuctions(auth.actorType === 'AUCTION_HOUSE');
       setIsAuthenticated(true);
       setView('home');
     } catch {
       setError('E-mail ou senha invalidos.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleAuctionHouseInviteSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!officeInviteToken) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError('');
+
+    const phoneError = validatePhone(auctionHouseInviteForm.phone);
+    const documentError = validateCnpj(auctionHouseInviteForm.document);
+
+    if (phoneError || documentError) {
+      setError(phoneError || documentError);
+      setIsSubmitting(false);
+      return;
+    }
+
+    const payload: CreateAuctionHouseInvitePayload = {
+      name: auctionHouseInviteForm.name.trim(),
+      document: onlyDigits(auctionHouseInviteForm.document) || undefined,
+      email: auctionHouseInviteForm.email.trim(),
+      phone: onlyDigits(auctionHouseInviteForm.phone) || undefined,
+      password: auctionHouseInviteForm.password,
+      city: auctionHouseInviteForm.city.trim() || undefined,
+      state: auctionHouseInviteForm.state.trim() || undefined,
+      country: auctionHouseInviteForm.country.trim() || undefined,
+    };
+
+    try {
+      const auth = await registerAuctionHouseWithInvite(officeInviteToken, payload);
+
+      if (!auth.auctionHouse) {
+        throw new Error('Cadastro de escritorio invalido');
+      }
+
+      persistAuctionHouseAuth(auth.accessToken, auth.auctionHouse);
+      setCreatedUserName(auth.auctionHouse.name);
+      setCurrentAuctionHouse(auth.auctionHouse);
+      setCurrentUser(null);
+      setAuctionHouseInviteForm(emptyAuctionHouseInviteForm);
+      setOfficeInviteToken(null);
+      setOfficeInviteStatus('idle');
+      setIsOfficeInviteEmailLocked(false);
+      setIsAuthenticated(true);
+      setView('home');
+      window.history.replaceState(null, '', '/');
+      await loadAuctions(true);
+    } catch {
+      setError('Nao foi possivel cadastrar o escritorio com este convite.');
     } finally {
       setIsSubmitting(false);
     }
@@ -354,6 +696,11 @@ function App() {
       quantity: toNumber(lotForm.quantity),
       initialPrice: toNumber(lotForm.initialPrice),
       auctionId: selectedAuctionId,
+      images: lotImages.map(({ fileName, dataUrl, description }) => ({
+        fileName,
+        dataUrl,
+        description,
+      })),
     };
 
     try {
@@ -363,6 +710,7 @@ function App() {
         ...emptyLotForm,
         auctionId: view === 'auctionRoom' ? selectedAuctionId : selectableAuctions[0]?.id || '',
       });
+      setLotImages([]);
       await loadLots();
       setView(view === 'auctionRoom' ? 'auctionRoom' : 'home');
     } catch {
@@ -383,7 +731,6 @@ function App() {
       scheduledAt: auctionForm.scheduledAt
         ? new Date(auctionForm.scheduledAt).toISOString()
         : undefined,
-      mode: auctionForm.mode,
       status: auctionForm.scheduledAt ? 'SCHEDULED' : 'DRAFT',
     };
 
@@ -392,7 +739,7 @@ function App() {
       setCreatedAuctionId(auction.id);
       setSelectedAuctionId(auction.id);
       setAuctionForm(emptyAuctionForm);
-      await loadAuctions();
+      await loadAuctions(true);
       setLotForm({ ...emptyLotForm, auctionId: auction.id });
       setView('auctionRoom');
     } catch {
@@ -422,7 +769,7 @@ function App() {
       setCurrentUser(user);
       setSellerProfileForm(emptySellerProfileForm);
       setError('');
-      setView('registerLot');
+      setView('home');
     } catch {
       setError('Nao foi possivel completar o cadastro de produtor.');
     } finally {
@@ -445,7 +792,6 @@ function App() {
     setView('home');
   }
 
-  const canRequestLot = Boolean(currentAuctionHouse || currentUser?.sellerProfile);
   const canCompleteSellerProfile = Boolean(
     currentUser && !currentUser.buyerProfile && !currentUser.sellerProfile,
   );
@@ -455,6 +801,171 @@ function App() {
   )
     ? lotForm.auctionId
     : selectableAuctions[0]?.id || '';
+
+  if (officeInviteToken) {
+    return (
+      <main className="app-shell auth-shell">
+        <section className="register-page user-register-page">
+          <div className="register-copy">
+            <span className="brand-inline">
+              <span className="brand-mark">CA</span>
+              Cattle Auction
+            </span>
+            <span className="eyebrow">Convite de escritorio</span>
+            <h1>Cadastro do escritorio</h1>
+            <p>
+              Este cadastro e liberado apenas pelo link de convite enviado pela
+              plataforma.
+            </p>
+          </div>
+
+          <form className="lot-form user-form" onSubmit={handleAuctionHouseInviteSubmit}>
+            <div className="form-header">
+              <h2>Dados do escritorio</h2>
+            </div>
+
+            {isValidatingOfficeInvite || officeInviteStatus === 'idle' ? (
+              <p className="loading-message">Validando convite...</p>
+            ) : officeInviteStatus === 'invalid' ? (
+              <p className="form-error">
+                Link invalido, expirado ou ja utilizado. Solicite um novo convite.
+              </p>
+            ) : (
+              <>
+                <label>
+                  Nome do escritorio
+                  <input
+                    required
+                    value={auctionHouseInviteForm.name}
+                    onChange={(event) =>
+                      updateAuctionHouseInviteField('name', event.target.value)
+                    }
+                    placeholder="Leiloes Campo Alto"
+                  />
+                </label>
+
+                <div className="form-grid">
+                  <label>
+                    E-mail
+                    <input
+                      required
+                      readOnly={isOfficeInviteEmailLocked}
+                      type="email"
+                      value={auctionHouseInviteForm.email}
+                      onChange={(event) =>
+                        updateAuctionHouseInviteField('email', event.target.value)
+                      }
+                      placeholder="escritorio@email.com"
+                    />
+                  </label>
+
+                  <label>
+                    Senha
+                    <input
+                      required
+                      minLength={6}
+                      type="password"
+                      value={auctionHouseInviteForm.password}
+                      onChange={(event) =>
+                        updateAuctionHouseInviteField('password', event.target.value)
+                      }
+                      placeholder="Minimo 6 caracteres"
+                    />
+                  </label>
+                </div>
+
+                <div className="form-grid">
+                  <label>
+                    CNPJ
+                    <input
+                      inputMode="numeric"
+                      maxLength={18}
+                      value={auctionHouseInviteForm.document}
+                      onChange={(event) =>
+                        updateAuctionHouseInviteDocument(event.target.value)
+                      }
+                      placeholder="00.000.000/0000-00"
+                    />
+                    {showDevDocumentTools && (
+                      <button
+                        className="inline-helper-action"
+                        type="button"
+                        onClick={fillDevAuctionHouseCnpj}
+                      >
+                        Gerar CNPJ de teste
+                      </button>
+                    )}
+                  </label>
+
+                  <label>
+                    Telefone
+                    <input
+                      inputMode="numeric"
+                      maxLength={15}
+                      value={auctionHouseInviteForm.phone}
+                      onChange={(event) =>
+                        updateAuctionHouseInvitePhone(event.target.value)
+                      }
+                      placeholder="(00) 00000-0000"
+                    />
+                  </label>
+                </div>
+
+                <div className="form-grid three">
+                  <label>
+                    Cidade
+                    <input
+                      value={auctionHouseInviteForm.city}
+                      onChange={(event) =>
+                        updateAuctionHouseInviteField('city', event.target.value)
+                      }
+                      placeholder="Campo Grande"
+                    />
+                  </label>
+
+                  <label>
+                    Estado
+                    <input
+                      maxLength={2}
+                      value={auctionHouseInviteForm.state}
+                      onChange={(event) =>
+                        updateAuctionHouseInviteField(
+                          'state',
+                          event.target.value.toUpperCase(),
+                        )
+                      }
+                      placeholder="MS"
+                    />
+                  </label>
+
+                  <label>
+                    Pais
+                    <input
+                      value={auctionHouseInviteForm.country}
+                      onChange={(event) =>
+                        updateAuctionHouseInviteField('country', event.target.value)
+                      }
+                      placeholder="BR"
+                    />
+                  </label>
+                </div>
+
+                {error && <p className="form-error">{error}</p>}
+
+                <button
+                  className="primary-action"
+                  disabled={isSubmitting || officeInviteStatus !== 'valid'}
+                  type="submit"
+                >
+                  {isSubmitting ? 'Criando escritorio...' : 'Criar conta do escritorio'}
+                </button>
+              </>
+            )}
+          </form>
+        </section>
+      </main>
+    );
+  }
 
   if (!isAuthenticated) {
     return (
@@ -570,8 +1081,10 @@ function App() {
                   <label>
                     Telefone
                     <input
+                      inputMode="numeric"
+                      maxLength={15}
                       value={userForm.phone}
-                      onChange={(event) => updateUserField('phone', event.target.value)}
+                      onChange={(event) => updateUserPhone(event.target.value)}
                       placeholder="(00) 00000-0000"
                     />
                   </label>
@@ -579,10 +1092,21 @@ function App() {
                   <label>
                     Documento
                     <input
+                      inputMode="numeric"
+                      maxLength={18}
                       value={userForm.document}
-                      onChange={(event) => updateUserField('document', event.target.value)}
+                      onChange={(event) => updateUserDocument(event.target.value)}
                       placeholder="CPF ou CNPJ"
                     />
+                    {showDevDocumentTools && (
+                      <button
+                        className="inline-helper-action"
+                        type="button"
+                        onClick={fillDevUserCpf}
+                      >
+                        Gerar CPF de teste
+                      </button>
+                    )}
                   </label>
                 </div>
 
@@ -706,15 +1230,6 @@ function App() {
         </button>
 
         <nav className="nav-actions" aria-label="Navegacao principal">
-          {!currentAuctionHouse && canRequestLot && (
-            <button
-              className={view === 'registerLot' ? 'nav-link active' : 'nav-link'}
-              type="button"
-              onClick={() => setView('registerLot')}
-            >
-              Solicitar lote
-            </button>
-          )}
           {currentAuctionHouse && (
             <button
               className={view === 'createAuction' ? 'nav-link active' : 'nav-link'}
@@ -773,13 +1288,15 @@ function App() {
                 <h1>{selectedAuction?.title || 'Remate'}</h1>
                 {selectedAuction?.description && <p>{selectedAuction.description}</p>}
               </div>
-              <button
-                className="secondary-action"
-                type="button"
-                onClick={() => setView('createAuction')}
-              >
-                Novo remate
-              </button>
+              {currentAuctionHouse && (
+                <button
+                  className="secondary-action"
+                  type="button"
+                  onClick={() => setView('createAuction')}
+                >
+                  Novo remate
+                </button>
+              )}
             </div>
 
             <div className="auction-lot-list">
@@ -788,120 +1305,242 @@ function App() {
                 <span>{selectedAuctionLots.length}</span>
               </div>
 
-              {selectedAuctionLots.length === 0 ? (
+              {isLoadingLots ? (
+                <p className="loading-message">Carregando lotes do remate...</p>
+              ) : selectedAuctionLots.length === 0 ? (
                 <p className="loading-message">Nenhum lote adicionado neste remate.</p>
               ) : (
                 <div className="room-lots">
                   {selectedAuctionLots.map((lot) => (
-                    <article
+                    <button
                       className={lot.id === createdLotId ? 'room-lot highlighted' : 'room-lot'}
                       key={lot.id}
+                      type="button"
+                      onClick={() => {
+                        setDetailLotImages([]);
+                        setSelectedLotId(lot.id);
+                      }}
                     >
                       <strong>{lot.code}</strong>
                       <div>
                         <h3>{lot.title}</h3>
                         <span>{formatCurrency(lot.initialPrice)}</span>
                       </div>
-                      <small>{lot.status}</small>
-                    </article>
+                      <small>
+                        {lot.media?.length ? `${lot.media.length} imagens` : lot.status}
+                      </small>
+                    </button>
                   ))}
                 </div>
               )}
             </div>
           </div>
 
-          <aside className="room-side-panel">
-            <div className="form-header compact">
-              <h2>Adicionar lote</h2>
+          {currentAuctionHouse && (
+            <aside className="room-side-panel">
+              <div className="form-header compact">
+                <h2>Adicionar lote</h2>
+              </div>
+
+              <form className="room-lot-form" onSubmit={handleLotSubmit}>
+                <label>
+                  Codigo
+                  <input
+                    required
+                    value={lotForm.code}
+                    onChange={(event) => updateLotField('code', event.target.value)}
+                    placeholder="LOTE-001"
+                  />
+                </label>
+
+                <label>
+                  Titulo
+                  <input
+                    required
+                    value={lotForm.title}
+                    onChange={(event) => updateLotField('title', event.target.value)}
+                    placeholder="Nelore PO - lote jovem"
+                  />
+                </label>
+
+                <div className="form-grid">
+                  <label>
+                    Raca
+                    <input
+                      value={lotForm.breed}
+                      onChange={(event) => updateLotField('breed', event.target.value)}
+                      placeholder="Nelore"
+                    />
+                  </label>
+
+                  <label>
+                    Categoria
+                    <input
+                      value={lotForm.category}
+                      onChange={(event) => updateLotField('category', event.target.value)}
+                      placeholder="Corte"
+                    />
+                  </label>
+                </div>
+
+                <div className="form-grid">
+                  <label>
+                    Quantidade
+                    <input
+                      min="1"
+                      type="number"
+                      value={lotForm.quantity}
+                      onChange={(event) => updateLotField('quantity', event.target.value)}
+                    />
+                  </label>
+
+                  <label>
+                    Valor inicial
+                    <input
+                      min="0"
+                      type="number"
+                      value={lotForm.initialPrice}
+                      onChange={(event) => updateLotField('initialPrice', event.target.value)}
+                      placeholder="15000"
+                    />
+                  </label>
+                </div>
+
+                <label>
+                  Descricao
+                  <textarea
+                    value={lotForm.description}
+                    onChange={(event) => updateLotField('description', event.target.value)}
+                    placeholder="Descricao do lote."
+                  />
+                </label>
+
+                {renderLotImageInput()}
+
+                {error && <p className="form-error">{error}</p>}
+                {createdLotId && (
+                  <p className="success-message">Lote adicionado ao remate.</p>
+                )}
+
+                <button
+                  className="primary-action"
+                  disabled={isSubmitting || !selectedAuction}
+                  type="submit"
+                >
+                  {isSubmitting ? 'Adicionando...' : 'Adicionar lote'}
+                </button>
+              </form>
+            </aside>
+          )}
+
+          {selectedLot && (
+            <div
+              aria-labelledby="lot-detail-title"
+              aria-modal="true"
+              className="modal-backdrop"
+              role="dialog"
+            >
+              <section className="lot-detail-modal">
+                <div className="modal-header">
+                  <div>
+                    <span className="eyebrow">Detalhes do lote</span>
+                    <h2 id="lot-detail-title">{selectedLot.title}</h2>
+                  </div>
+                  <button
+                    className="text-action"
+                    type="button"
+                    onClick={() => {
+                      setDetailLotImages([]);
+                      setSelectedLotId(null);
+                    }}
+                  >
+                    Fechar
+                  </button>
+                </div>
+
+                {selectedLot.media?.length ? (
+                  <div className="lot-gallery">
+                    {selectedLot.media.map((media) => (
+                      <img
+                        alt={media.description || selectedLot.title}
+                        key={media.id}
+                        src={resolveMediaUrl(media.url)}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <p className="loading-message">Este lote ainda nao possui imagens.</p>
+                )}
+
+                <dl className="lot-stats detail-stats">
+                  <div>
+                    <dt>Codigo</dt>
+                    <dd>{selectedLot.code}</dd>
+                  </div>
+                  <div>
+                    <dt>Valor</dt>
+                    <dd>{formatCurrency(selectedLot.initialPrice)}</dd>
+                  </div>
+                  <div>
+                    <dt>Qtd.</dt>
+                    <dd>{selectedLot.quantity}</dd>
+                  </div>
+                  <div>
+                    <dt>Status</dt>
+                    <dd>{selectedLot.status}</dd>
+                  </div>
+                </dl>
+
+                {selectedLot.description && <p>{selectedLot.description}</p>}
+
+                {currentAuctionHouse && (
+                  <div className="detail-image-editor">
+                    <div className="form-header compact">
+                      <h2>Adicionar imagens</h2>
+                    </div>
+
+                    <label>
+                      Novas imagens
+                      <input
+                        accept="image/*"
+                        multiple
+                        type="file"
+                        onChange={handleDetailLotImageChange}
+                      />
+                    </label>
+
+                    {detailLotImages.length > 0 && (
+                      <div className="image-upload-list">
+                        {detailLotImages.map((image) => (
+                          <div className="image-upload-item" key={image.id}>
+                            <img alt="" src={image.dataUrl} />
+                            <span>{image.fileName}</span>
+                            <button
+                              type="button"
+                              onClick={() => removeDetailLotImage(image.id)}
+                            >
+                              Remover
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {error && <p className="form-error">{error}</p>}
+
+                    <button
+                      className="primary-action"
+                      disabled={isSubmitting || detailLotImages.length === 0}
+                      type="button"
+                      onClick={saveDetailLotImages}
+                    >
+                      {isSubmitting ? 'Salvando...' : 'Salvar imagens'}
+                    </button>
+                  </div>
+                )}
+              </section>
             </div>
-
-            <form className="room-lot-form" onSubmit={handleLotSubmit}>
-              <label>
-                Codigo
-                <input
-                  required
-                  value={lotForm.code}
-                  onChange={(event) => updateLotField('code', event.target.value)}
-                  placeholder="LOTE-001"
-                />
-              </label>
-
-              <label>
-                Titulo
-                <input
-                  required
-                  value={lotForm.title}
-                  onChange={(event) => updateLotField('title', event.target.value)}
-                  placeholder="Nelore PO - lote jovem"
-                />
-              </label>
-
-              <div className="form-grid">
-                <label>
-                  Raca
-                  <input
-                    value={lotForm.breed}
-                    onChange={(event) => updateLotField('breed', event.target.value)}
-                    placeholder="Nelore"
-                  />
-                </label>
-
-                <label>
-                  Categoria
-                  <input
-                    value={lotForm.category}
-                    onChange={(event) => updateLotField('category', event.target.value)}
-                    placeholder="Corte"
-                  />
-                </label>
-              </div>
-
-              <div className="form-grid">
-                <label>
-                  Quantidade
-                  <input
-                    min="1"
-                    type="number"
-                    value={lotForm.quantity}
-                    onChange={(event) => updateLotField('quantity', event.target.value)}
-                  />
-                </label>
-
-                <label>
-                  Valor inicial
-                  <input
-                    min="0"
-                    type="number"
-                    value={lotForm.initialPrice}
-                    onChange={(event) => updateLotField('initialPrice', event.target.value)}
-                    placeholder="15000"
-                  />
-                </label>
-              </div>
-
-              <label>
-                Descricao
-                <textarea
-                  value={lotForm.description}
-                  onChange={(event) => updateLotField('description', event.target.value)}
-                  placeholder="Descricao do lote."
-                />
-              </label>
-
-              {error && <p className="form-error">{error}</p>}
-              {createdLotId && (
-                <p className="success-message">Lote adicionado ao remate.</p>
-              )}
-
-              <button
-                className="primary-action"
-                disabled={isSubmitting || !selectedAuction}
-                type="submit"
-              >
-                {isSubmitting ? 'Adicionando...' : 'Adicionar lote'}
-              </button>
-            </form>
-          </aside>
+          )}
         </section>
       ) : view === 'createAuction' ? (
         <section className="register-page">
@@ -936,19 +1575,6 @@ function App() {
                 value={auctionForm.scheduledAt}
                 onChange={(event) => updateAuctionField('scheduledAt', event.target.value)}
               />
-            </label>
-
-            <label>
-              Modalidade
-              <select
-                value={auctionForm.mode}
-                onChange={(event) => updateAuctionField('mode', event.target.value)}
-              >
-                <option value="LIVE">Ao vivo</option>
-                <option value="PRE_BID">Pre-lance</option>
-                <option value="TIMED">Temporizado</option>
-                <option value="HYBRID">Hibrido</option>
-              </select>
             </label>
 
             <label>
@@ -1221,6 +1847,8 @@ function App() {
               />
             </label>
 
+            {renderLotImageInput()}
+
             {error && <p className="form-error">{error}</p>}
 
             <button
@@ -1241,7 +1869,7 @@ function App() {
           <div className="home-heading">
             <div>
               <span className="eyebrow">Remates</span>
-              <h1>{currentAuctionHouse ? 'Meus remates' : 'Remates e lotes disponiveis'}</h1>
+              <h1>{currentAuctionHouse ? 'Meus remates' : 'Remates disponiveis'}</h1>
             </div>
             {currentAuctionHouse ? (
               <button
@@ -1251,17 +1879,7 @@ function App() {
               >
                 Criar remate
               </button>
-            ) : (
-              canRequestLot && (
-                <button
-                  className="secondary-action"
-                  type="button"
-                  onClick={() => setView('registerLot')}
-                >
-                  Solicitar lote
-                </button>
-              )
-            )}
+            ) : null}
             {canCompleteSellerProfile && (
               <button
                 className="secondary-action"
@@ -1293,9 +1911,7 @@ function App() {
             ) : (
               <div className="auction-grid">
                 {selectableAuctions.map((auction) => {
-                  const auctionLots = lots.filter(
-                    (lot) => lot.auctionId === auction.id || lot.auction?.id === auction.id,
-                  );
+                  const auctionLotCount = getAuctionLotCount(auction);
 
                   return (
                     <article
@@ -1322,7 +1938,7 @@ function App() {
                         <dl className="lot-stats">
                           <div>
                             <dt>Lotes</dt>
-                            <dd>{auctionLots.length}</dd>
+                            <dd>{auctionLotCount}</dd>
                           </div>
                           <div>
                             <dt>Modo</dt>
@@ -1350,56 +1966,66 @@ function App() {
                 })}
               </div>
             )
-          ) : isLoadingLots ? (
-            <p className="loading-message">Carregando lotes...</p>
-          ) : featuredLots.length === 0 ? (
-            <p className="loading-message">Nenhum lote disponivel no momento.</p>
+          ) : isLoadingAuctions ? (
+            <p className="loading-message">Carregando remates...</p>
+          ) : publicAuctions.length === 0 ? (
+            <p className="loading-message">Nenhum remate disponivel no momento.</p>
           ) : (
-            <div className="live-grid">
-              {featuredLots.map((lot, index) => (
-                <article
-                  className={lot.id === createdLotId ? 'live-card highlighted' : 'live-card'}
-                  key={lot.id}
-                >
-                  <div className={`thumbnail tone-${index % 3}`}>
-                    <div className="thumbnail-top">
-                      <span>{index === 0 ? 'AO VIVO' : 'LOTE'}</span>
-                      <strong>{lot.code}</strong>
-                    </div>
-                    <div className="thumbnail-stage">
-                      <span className="arena-line"></span>
+            <div className="auction-grid">
+              {publicAuctions.map((auction) => {
+                const auctionLotCount = getAuctionLotCount(auction);
+
+                return (
+                  <article
+                    className={
+                      auction.id === createdAuctionId
+                        ? 'auction-card highlighted'
+                        : 'auction-card'
+                    }
+                    key={auction.id}
+                  >
+                    <button
+                      aria-label={`Entrar no remate ${auction.title}`}
+                      className="auction-card-player"
+                      type="button"
+                      onClick={() => enterAuctionRoom(auction.id)}
+                    >
+                      <span className="live-dot"></span>
                       <span className="play-button">Play</span>
+                    </button>
+                    <div className="auction-card-body">
+                      <span className="eyebrow">{auction.status}</span>
+                      <h2>{auction.title}</h2>
+                      <p>{auction.description || 'Remate disponivel para acompanhamento online.'}</p>
+                      <dl className="lot-stats">
+                        <div>
+                          <dt>Lotes</dt>
+                          <dd>{auctionLotCount}</dd>
+                        </div>
+                        <div>
+                          <dt>Escritorio</dt>
+                          <dd>{auction.auctionHouse?.name || '-'}</dd>
+                        </div>
+                        <div>
+                          <dt>Data</dt>
+                          <dd className="date-value">
+                            {auction.scheduledAt
+                              ? new Date(auction.scheduledAt).toLocaleDateString('pt-BR')
+                              : '-'}
+                          </dd>
+                        </div>
+                      </dl>
+                      <button
+                        className="primary-action"
+                        type="button"
+                        onClick={() => enterAuctionRoom(auction.id)}
+                      >
+                        Entrar no remate
+                      </button>
                     </div>
-                  </div>
-
-                  <div className="card-body">
-                    <div className="card-title-row">
-                      <h2>{lot.title}</h2>
-                      <span>{formatCurrency(lot.initialPrice)}</span>
-                    </div>
-                    <p>{lot.description || 'Lote disponivel para acompanhamento online.'}</p>
-
-                    <dl className="lot-stats">
-                      <div>
-                        <dt>Qtd.</dt>
-                        <dd>{lot.quantity}</dd>
-                      </div>
-                      <div>
-                        <dt>Peso</dt>
-                        <dd>{lot.weightKg ? `${lot.weightKg} kg` : '-'}</dd>
-                      </div>
-                      <div>
-                        <dt>Idade</dt>
-                        <dd>{lot.ageMonths ? `${lot.ageMonths} m` : '-'}</dd>
-                      </div>
-                      <div>
-                        <dt>Raca</dt>
-                        <dd>{lot.breed || '-'}</dd>
-                      </div>
-                    </dl>
-                  </div>
-                </article>
-              ))}
+                  </article>
+                );
+              })}
             </div>
           )}
         </section>

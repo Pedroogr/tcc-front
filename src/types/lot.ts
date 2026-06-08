@@ -16,7 +16,22 @@ export type Lot = {
     id: string;
     title: string;
   } | null;
+  media?: LotMedia[];
   createdAt: string;
+};
+
+export type LotMedia = {
+  id: string;
+  type: string;
+  url: string;
+  description?: string | null;
+  sortOrder: number;
+};
+
+export type LotImagePayload = {
+  fileName: string;
+  dataUrl: string;
+  description?: string;
 };
 
 export type CreateLotPayload = {
@@ -31,4 +46,5 @@ export type CreateLotPayload = {
   quantity?: number;
   initialPrice?: number;
   auctionId: string;
+  images?: LotImagePayload[];
 };

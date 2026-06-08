@@ -61,3 +61,31 @@ export type AuctionHouse = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type CreateAuctionHouseInvitePayload = {
+  name: string;
+  document?: string;
+  email: string;
+  phone?: string;
+  password: string;
+  city?: string;
+  state?: string;
+  country?: string;
+};
+
+export type BuyerRegistrationStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'BLOCKED';
+
+export type BuyerRegistration = {
+  id: string;
+  status: BuyerRegistrationStatus;
+  notes?: string | null;
+  buyerId: string;
+  auctionHouseId: string;
+  reviewedById?: string | null;
+  approvedAt?: string | null;
+  rejectedAt?: string | null;
+  buyer?: User;
+  auctionHouse?: AuctionHouse;
+  createdAt: string;
+  updatedAt: string;
+};

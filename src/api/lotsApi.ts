@@ -11,3 +11,10 @@ export function createLot(payload: CreateLotPayload) {
     body: JSON.stringify(payload),
   });
 }
+
+export function updateLot(id: string, payload: Partial<CreateLotPayload>) {
+  return apiRequest<Lot>(`/lots/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}

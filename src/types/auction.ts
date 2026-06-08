@@ -10,6 +10,9 @@ export type Auction = {
     id: string;
     name: string;
   };
+  _count?: {
+    lots: number;
+  };
   lots?: Array<{
     id: string;
     code: string;
@@ -24,5 +27,4 @@ export type CreateAuctionPayload = {
   description?: string;
   scheduledAt?: string;
   status?: string;
-  mode?: string;
 };

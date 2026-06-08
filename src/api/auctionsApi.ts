@@ -5,6 +5,10 @@ export function listAuctions() {
   return apiRequest<Auction[]>('/auctions');
 }
 
+export function listPublicAuctions() {
+  return apiRequest<Auction[]>('/auctions/public');
+}
+
 export function createAuction(payload: CreateAuctionPayload) {
   return apiRequest<Auction>('/auctions', {
     method: 'POST',
