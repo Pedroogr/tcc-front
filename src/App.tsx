@@ -222,25 +222,47 @@ function App() {
     getStoredAuctionHouse(),
   );
 
+  const isAuctionOwnedByCurrentOffice = useCallback(
+    (auction: Auction) =>
+      Boolean(
+        currentAuctionHouse &&
+          (auction.auctionHouseId === currentAuctionHouse.id ||
+            auction.auctionHouse?.id === currentAuctionHouse.id),
+      ),
+    [currentAuctionHouse],
+  );
+
   const publicAuctions = useMemo(() => {
     return auctions.filter((auction) => !['DRAFT', 'CANCELED'].includes(auction.status));
   }, [auctions]);
 
-  const selectableAuctions = useMemo(() => {
+  const visibleAuctions = useMemo(() => {
     if (!currentAuctionHouse) {
-      return auctions;
+      return publicAuctions;
     }
 
     return auctions.filter(
       (auction) =>
-        auction.auctionHouseId === currentAuctionHouse.id ||
-        auction.auctionHouse?.id === currentAuctionHouse.id,
+        isAuctionOwnedByCurrentOffice(auction) ||
+        !['DRAFT', 'CANCELED'].includes(auction.status),
     );
-  }, [auctions, currentAuctionHouse]);
+  }, [auctions, currentAuctionHouse, isAuctionOwnedByCurrentOffice, publicAuctions]);
+
+  const selectableAuctions = useMemo(() => {
+    if (!currentAuctionHouse) {
+      return publicAuctions;
+    }
+
+    return auctions.filter((auction) => isAuctionOwnedByCurrentOffice(auction));
+  }, [auctions, currentAuctionHouse, isAuctionOwnedByCurrentOffice, publicAuctions]);
 
   const selectedAuction = useMemo(() => {
     return auctions.find((auction) => auction.id === selectedAuctionId) ?? null;
   }, [auctions, selectedAuctionId]);
+
+  const canManageSelectedAuction = Boolean(
+    selectedAuction && currentAuctionHouse && isAuctionOwnedByCurrentOffice(selectedAuction),
+  );
 
   const selectedAuctionLots = useMemo(() => {
     if (!selectedAuctionId) {
@@ -678,7 +700,7 @@ function App() {
     setError('');
 
     const selectedAuctionId =
-      view === 'auctionRoom' && selectedAuction
+      view === 'auctionRoom' && selectedAuction && canManageSelectedAuction
         ? selectedAuction.id
         : selectableAuctions.some((auction) => auction.id === lotForm.auctionId)
           ? lotForm.auctionId
@@ -1288,7 +1310,7 @@ function App() {
                 <h1>{selectedAuction?.title || 'Remate'}</h1>
                 {selectedAuction?.description && <p>{selectedAuction.description}</p>}
               </div>
-              {currentAuctionHouse && (
+              {canManageSelectedAuction && (
                 <button
                   className="secondary-action"
                   type="button"
@@ -1336,7 +1358,7 @@ function App() {
             </div>
           </div>
 
-          {currentAuctionHouse && (
+          {canManageSelectedAuction && (
             <aside className="room-side-panel">
               <div className="form-header compact">
                 <h2>Adicionar lote</h2>
@@ -1493,7 +1515,7 @@ function App() {
 
                 {selectedLot.description && <p>{selectedLot.description}</p>}
 
-                {currentAuctionHouse && (
+                {canManageSelectedAuction && (
                   <div className="detail-image-editor">
                     <div className="form-header compact">
                       <h2>Adicionar imagens</h2>
@@ -1869,7 +1891,7 @@ function App() {
           <div className="home-heading">
             <div>
               <span className="eyebrow">Remates</span>
-              <h1>{currentAuctionHouse ? 'Meus remates' : 'Remates disponiveis'}</h1>
+              <h1>Remates disponiveis</h1>
             </div>
             {currentAuctionHouse ? (
               <button
@@ -1905,75 +1927,15 @@ function App() {
             <p className="success-message">Remate criado e pronto para receber lotes.</p>
           )}
 
-          {currentAuctionHouse ? (
-            selectableAuctions.length === 0 ? (
-              <p className="loading-message">Nenhum remate criado por este escritorio.</p>
-            ) : (
-              <div className="auction-grid">
-                {selectableAuctions.map((auction) => {
-                  const auctionLotCount = getAuctionLotCount(auction);
-
-                  return (
-                    <article
-                      className={
-                        auction.id === createdAuctionId
-                          ? 'auction-card highlighted'
-                          : 'auction-card'
-                      }
-                      key={auction.id}
-                    >
-                      <button
-                        aria-label={`Entrar no remate ${auction.title}`}
-                        className="auction-card-player"
-                        type="button"
-                        onClick={() => enterAuctionRoom(auction.id)}
-                      >
-                        <span className="live-dot"></span>
-                        <span className="play-button">Play</span>
-                      </button>
-                      <div className="auction-card-body">
-                        <span className="eyebrow">{auction.status}</span>
-                        <h2>{auction.title}</h2>
-                        <p>{auction.description || 'Remate cadastrado pelo escritorio.'}</p>
-                        <dl className="lot-stats">
-                          <div>
-                            <dt>Lotes</dt>
-                            <dd>{auctionLotCount}</dd>
-                          </div>
-                          <div>
-                            <dt>Modo</dt>
-                            <dd>{auction.mode}</dd>
-                          </div>
-                          <div>
-                            <dt>Data</dt>
-                            <dd className="date-value">
-                              {auction.scheduledAt
-                                ? new Date(auction.scheduledAt).toLocaleDateString('pt-BR')
-                                : '-'}
-                            </dd>
-                          </div>
-                        </dl>
-                        <button
-                          className="primary-action"
-                          type="button"
-                          onClick={() => enterAuctionRoom(auction.id)}
-                        >
-                          Entrar no remate
-                        </button>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )
-          ) : isLoadingAuctions ? (
+          {isLoadingAuctions ? (
             <p className="loading-message">Carregando remates...</p>
-          ) : publicAuctions.length === 0 ? (
+          ) : visibleAuctions.length === 0 ? (
             <p className="loading-message">Nenhum remate disponivel no momento.</p>
           ) : (
             <div className="auction-grid">
-              {publicAuctions.map((auction) => {
+              {visibleAuctions.map((auction) => {
                 const auctionLotCount = getAuctionLotCount(auction);
+                const isOwnAuction = isAuctionOwnedByCurrentOffice(auction);
 
                 return (
                   <article
@@ -1994,7 +1956,11 @@ function App() {
                       <span className="play-button">Play</span>
                     </button>
                     <div className="auction-card-body">
-                      <span className="eyebrow">{auction.status}</span>
+                      <span className="eyebrow">
+                        {currentAuctionHouse && isOwnAuction
+                          ? `Meu escritorio - ${auction.status}`
+                          : auction.status}
+                      </span>
                       <h2>{auction.title}</h2>
                       <p>{auction.description || 'Remate disponivel para acompanhamento online.'}</p>
                       <dl className="lot-stats">
