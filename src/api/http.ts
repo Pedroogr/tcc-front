@@ -12,10 +12,11 @@ export async function apiRequest<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const token = localStorage.getItem(authStorage.tokenKey);
+  const isFormData = options.body instanceof FormData;
 
   const response = await fetch(`${apiUrl}${path}`, {
     headers: {
-      'Content-Type': 'application/json',
+      ...(!isFormData ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     },

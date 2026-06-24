@@ -2,19 +2,52 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import './App.css';
 import { login, register } from './api/authApi';
-import { createAuction, listAuctions, listPublicAuctions } from './api/auctionsApi';
 import {
+  createAuction,
+  listAuctions,
+  listPublicAuctions,
+  uploadAuctionThumbnail,
+} from './api/auctionsApi';
+import { getAuctionStream } from './api/streamsApi';
+import {
+  getMyBuyerRegistration,
+  listMyBuyerRegistrations,
   registerAuctionHouseWithInvite,
+  requestAuctionHouseApproval,
+  reviewBuyerRegistration,
   validateAuctionHouseInvite,
 } from './api/auctionHousesApi';
 import { apiUrl, authStorage } from './api/http';
-import { createLot, listLots, updateLot } from './api/lotsApi';
+import { createBid, createLot, listLots, updateLot } from './api/lotsApi';
 import { upsertSellerProfile } from './api/usersApi';
-import type { Auction } from './types/auction';
+import { AccountMenu } from './components/AccountMenu';
+import { AuctionCard, AuctionCardSkeleton } from './components/AuctionCard';
+import { AuctionBroadcastControls } from './components/AuctionBroadcastControls';
+import { AuctionStreamPlayer } from './components/AuctionStreamPlayer';
+import { Button } from './components/ui/button';
+import { Input } from './components/ui/input';
+import { Separator } from './components/ui/separator';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from './components/ui/select';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from './components/ui/sheet';
+import type { Auction, AuctionStreamState } from './types/auction';
 import type { CreateAuctionPayload } from './types/auction';
 import type { CreateLotPayload, Lot, LotImagePayload } from './types/lot';
 import type {
   AuctionHouse,
+  BuyerRegistration,
   CreateAuctionHouseInvitePayload,
   CreateSellerProfilePayload,
   CreateUserPayload,
@@ -33,6 +66,15 @@ import {
   validateCpfOrCnpj,
   validatePhone,
 } from './utils/brFields';
+import {
+  CalendarDays,
+  ChevronDown,
+  ChevronUp,
+  Plus,
+  Radio,
+  Search,
+  Sprout,
+} from 'lucide-react';
 
 const emptyLotForm = {
   code: '',
@@ -87,12 +129,33 @@ type AuctionFormState = typeof emptyAuctionForm;
 type UserFormState = typeof emptyUserForm;
 type SellerProfileFormState = typeof emptySellerProfileForm;
 type AuctionHouseInviteFormState = typeof emptyAuctionHouseInviteForm;
-type View = 'home' | 'registerLot' | 'sellerProfile' | 'createAuction' | 'auctionRoom';
+type View =
+  | 'home'
+  | 'registerLot'
+  | 'sellerProfile'
+  | 'createAuction'
+  | 'auctionRoom'
+  | 'accountDetails';
 type AuthMode = 'login' | 'register';
+type AuctionStatusFilter = 'ALL' | 'LIVE' | 'SCHEDULED' | 'FINISHED';
 
 type LotImageFormItem = LotImagePayload & {
   id: string;
 };
+
+type AuctionThumbnailFormState = {
+  file: File;
+  previewUrl: string;
+};
+
+const acceptedAuctionThumbnailTypes = ['image/jpeg', 'image/png', 'image/webp'];
+const auctionThumbnailMaxSize = 5 * 1024 * 1024;
+
+// Incremento sugerido de lance, padrao da plataforma (nao do escritorio).
+const PLATFORM_BID_INCREMENT = 100;
+
+// Passo das setas do campo de lance.
+const BID_STEP = 5;
 
 const showDevDocumentTools = import.meta.env.DEV;
 
@@ -116,6 +179,22 @@ function resolveMediaUrl(url: string) {
   return `${apiUrl}${url}`;
 }
 
+function getAuctionDisplayStatus(auction: Auction) {
+  if (auction.stream?.status === 'LIVE') {
+    return 'LIVE';
+  }
+
+  if (auction.stream?.status === 'ENDED') {
+    return 'STREAM_ENDED';
+  }
+
+  if (auction.stream?.status === 'ERROR') {
+    return 'STREAM_INTERRUPTED';
+  }
+
+  return auction.status;
+}
+
 function readFileAsDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -123,6 +202,24 @@ function readFileAsDataUrl(file: File) {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+}
+
+function parseApiErrorMessage(error: unknown, fallback: string) {
+  if (!(error instanceof Error)) {
+    return fallback;
+  }
+
+  try {
+    const parsed = JSON.parse(error.message) as { message?: string | string[] };
+
+    if (Array.isArray(parsed.message)) {
+      return parsed.message[0] || fallback;
+    }
+
+    return parsed.message || fallback;
+  } catch {
+    return error.message || fallback;
+  }
 }
 
 function getStoredUser() {
@@ -191,6 +288,8 @@ function App() {
   const [lotImages, setLotImages] = useState<LotImageFormItem[]>([]);
   const [detailLotImages, setDetailLotImages] = useState<LotImageFormItem[]>([]);
   const [auctionForm, setAuctionForm] = useState<AuctionFormState>(emptyAuctionForm);
+  const [auctionThumbnail, setAuctionThumbnail] =
+    useState<AuctionThumbnailFormState | null>(null);
   const [userForm, setUserForm] = useState<UserFormState>(emptyUserForm);
   const [auctionHouseInviteForm, setAuctionHouseInviteForm] =
     useState<AuctionHouseInviteFormState>(emptyAuctionHouseInviteForm);
@@ -211,12 +310,22 @@ function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingLots, setIsLoadingLots] = useState(false);
   const [isLoadingAuctions, setIsLoadingAuctions] = useState(false);
+  const [auctionStatusFilter, setAuctionStatusFilter] =
+    useState<AuctionStatusFilter>('ALL');
   const [error, setError] = useState('');
   const [createdLotId, setCreatedLotId] = useState<string | null>(null);
   const [createdAuctionId, setCreatedAuctionId] = useState<string | null>(null);
   const [createdUserName, setCreatedUserName] = useState<string | null>(null);
   const [selectedAuctionId, setSelectedAuctionId] = useState<string | null>(null);
+  const [selectedStreamState, setSelectedStreamState] =
+    useState<AuctionStreamState | null>(null);
   const [selectedLotId, setSelectedLotId] = useState<string | null>(null);
+  const [bidAmount, setBidAmount] = useState('');
+  const [myRegistration, setMyRegistration] = useState<BuyerRegistration | null | undefined>(
+    undefined,
+  );
+  const [buyerRegistrations, setBuyerRegistrations] = useState<BuyerRegistration[]>([]);
+  const [isLoadingBuyerRegistrations, setIsLoadingBuyerRegistrations] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(() => getStoredUser());
   const [currentAuctionHouse, setCurrentAuctionHouse] = useState<AuctionHouse | null>(() =>
     getStoredAuctionHouse(),
@@ -248,6 +357,16 @@ function App() {
     );
   }, [auctions, currentAuctionHouse, isAuctionOwnedByCurrentOffice, publicAuctions]);
 
+  const filteredVisibleAuctions = useMemo(() => {
+    if (auctionStatusFilter === 'ALL') {
+      return visibleAuctions;
+    }
+
+    return visibleAuctions.filter(
+      (auction) => getAuctionDisplayStatus(auction) === auctionStatusFilter,
+    );
+  }, [auctionStatusFilter, visibleAuctions]);
+
   const selectableAuctions = useMemo(() => {
     if (!currentAuctionHouse) {
       return publicAuctions;
@@ -259,6 +378,10 @@ function App() {
   const selectedAuction = useMemo(() => {
     return auctions.find((auction) => auction.id === selectedAuctionId) ?? null;
   }, [auctions, selectedAuctionId]);
+
+  const selectedAuctionStreamState = useMemo(() => {
+    return selectedStreamState?.auctionId === selectedAuctionId ? selectedStreamState : null;
+  }, [selectedAuctionId, selectedStreamState]);
 
   const canManageSelectedAuction = Boolean(
     selectedAuction && currentAuctionHouse && isAuctionOwnedByCurrentOffice(selectedAuction),
@@ -277,6 +400,43 @@ function App() {
   const selectedLot = useMemo(() => {
     return selectedAuctionLots.find((lot) => lot.id === selectedLotId) ?? null;
   }, [selectedAuctionLots, selectedLotId]);
+
+  const selectedAuctionHouseId =
+    selectedAuction?.auctionHouseId || selectedAuction?.auctionHouse?.id || null;
+
+  const lotWinningBid = useMemo(() => {
+    if (!selectedLot?.bids?.length) {
+      return null;
+    }
+
+    return selectedLot.bids.find((bid) => bid.status === 'WINNING') ?? null;
+  }, [selectedLot]);
+
+  const inPistaLot = useMemo(
+    () => selectedAuctionLots.find((lot) => lot.status === 'IN_AUCTION') ?? null,
+    [selectedAuctionLots],
+  );
+
+  const inPistaWinningBid = useMemo(
+    () => inPistaLot?.bids?.find((bid) => bid.status === 'WINNING') ?? null,
+    [inPistaLot],
+  );
+
+  const syncSelectedStreamState = useCallback((streamState: AuctionStreamState) => {
+    setSelectedStreamState(streamState);
+    setAuctions((currentAuctions) =>
+      currentAuctions.map((auction) =>
+        auction.id === streamState.auctionId
+          ? {
+              ...auction,
+              auctionHouseId: streamState.auction.auctionHouseId,
+              status: streamState.auction.status,
+              stream: streamState.stream,
+            }
+          : auction,
+      ),
+    );
+  }, []);
 
   useEffect(() => {
     if (!officeInviteToken) {
@@ -345,6 +505,14 @@ function App() {
     }
   }
 
+  async function refreshLotsQuietly() {
+    try {
+      setLots(await listLots());
+    } catch {
+      // mantem a ultima lista carregada se a atualizacao silenciosa falhar
+    }
+  }
+
   const loadAuctions = useCallback(async (includePrivateAuctions = Boolean(currentAuctionHouse)) => {
     setIsLoadingAuctions(true);
 
@@ -362,11 +530,141 @@ function App() {
     }
   }, [currentAuctionHouse]);
 
+  const loadBuyerRegistrations = useCallback(async () => {
+    if (!currentAuctionHouse) {
+      return;
+    }
+
+    setIsLoadingBuyerRegistrations(true);
+
+    try {
+      setBuyerRegistrations(await listMyBuyerRegistrations());
+    } catch {
+      setBuyerRegistrations([]);
+    } finally {
+      setIsLoadingBuyerRegistrations(false);
+    }
+  }, [currentAuctionHouse]);
+
   useEffect(() => {
     queueMicrotask(() => {
       void loadAuctions(Boolean(currentAuctionHouse));
     });
   }, [currentAuctionHouse, loadAuctions]);
+
+  useEffect(() => {
+    if (view !== 'auctionRoom' || !selectedAuctionId || !isAuthenticated) {
+      return;
+    }
+
+    let isCanceled = false;
+
+    getAuctionStream(selectedAuctionId)
+      .then((streamState) => {
+        if (!isCanceled) {
+          syncSelectedStreamState(streamState);
+        }
+      })
+      .catch(() => {
+        if (!isCanceled) {
+          setSelectedStreamState(null);
+        }
+      });
+
+    return () => {
+      isCanceled = true;
+    };
+  }, [isAuthenticated, selectedAuctionId, syncSelectedStreamState, view]);
+
+  // Escritorio: carrega e atualiza as solicitacoes de comprador sem precisar
+  // dar refresh (o que antes interrompia a transmissao).
+  useEffect(() => {
+    if (view !== 'auctionRoom' || !canManageSelectedAuction) {
+      return;
+    }
+
+    void loadBuyerRegistrations();
+    const interval = setInterval(() => {
+      void loadBuyerRegistrations();
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [view, canManageSelectedAuction, loadBuyerRegistrations]);
+
+  // Comprador: a liberacao e por escritorio (vale para todos os remates dele),
+  // entao buscamos ao entrar na sala e mantemos atualizado por polling.
+  useEffect(() => {
+    if (
+      view !== 'auctionRoom' ||
+      !currentUser ||
+      currentAuctionHouse ||
+      !selectedAuctionHouseId
+    ) {
+      setMyRegistration(undefined);
+      return;
+    }
+
+    let isCanceled = false;
+    const auctionHouseId = selectedAuctionHouseId;
+
+    const fetchRegistration = () => {
+      getMyBuyerRegistration(auctionHouseId)
+        .then((registration) => {
+          if (!isCanceled) {
+            setMyRegistration(registration);
+          }
+        })
+        .catch(() => {
+          if (!isCanceled) {
+            setMyRegistration(null);
+          }
+        });
+    };
+
+    fetchRegistration();
+    const interval = setInterval(fetchRegistration, 5000);
+
+    return () => {
+      isCanceled = true;
+      clearInterval(interval);
+    };
+  }, [view, currentUser, currentAuctionHouse, selectedAuctionHouseId]);
+
+  // Mantem os lances do lote em pista atualizados para todos na sala.
+  useEffect(() => {
+    if (view !== 'auctionRoom' || !inPistaLot) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      void refreshLotsQuietly();
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [view, inPistaLot?.id]);
+
+  // Pre-preenche o campo de lance com o proximo valor sugerido (incremento
+  // padrao da plataforma) quando o lote em pista muda.
+  useEffect(() => {
+    if (!inPistaLot) {
+      return;
+    }
+
+    const winning = inPistaLot.bids?.find((bid) => bid.status === 'WINNING');
+    const suggested = winning
+      ? Number(winning.amount) + PLATFORM_BID_INCREMENT
+      : Number(inPistaLot.initialPrice ?? 0);
+
+    setBidAmount(String(suggested));
+  }, [inPistaLot?.id]);
+
+  useEffect(() => {
+    return () => {
+      if (auctionThumbnail) {
+        URL.revokeObjectURL(auctionThumbnail.previewUrl);
+      }
+    };
+  }, [auctionThumbnail]);
 
   function updateLotField(field: keyof LotFormState, value: string) {
     setLotForm((current) => ({ ...current, [field]: value }));
@@ -445,6 +743,88 @@ function App() {
     }
   }
 
+  async function handleSetLotStage(nextStatus: string) {
+    if (!selectedLot) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError('');
+
+    try {
+      await updateLot(selectedLot.id, { status: nextStatus });
+      await loadLots();
+    } catch {
+      setError('Nao foi possivel atualizar o status do lote.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleRequestApproval() {
+    if (!selectedAuctionHouseId) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError('');
+
+    try {
+      setMyRegistration(await requestAuctionHouseApproval(selectedAuctionHouseId));
+    } catch (submitError) {
+      setError(parseApiErrorMessage(submitError, 'Nao foi possivel solicitar a liberacao.'));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  function stepBid(delta: number) {
+    setBidAmount((current) => {
+      const base = Number(current) || 0;
+      const next = Math.max(0, base + delta);
+      return String(next);
+    });
+  }
+
+  async function handleSubmitBid(event: FormEvent) {
+    event.preventDefault();
+
+    if (!inPistaLot) {
+      return;
+    }
+
+    const amount = Number(bidAmount);
+
+    if (!bidAmount.trim() || Number.isNaN(amount)) {
+      setError('Informe um valor de lance valido.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError('');
+
+    try {
+      await createBid(inPistaLot.id, amount);
+      await refreshLotsQuietly();
+    } catch (submitError) {
+      setError(parseApiErrorMessage(submitError, 'Nao foi possivel registrar o lance.'));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleReviewRegistration(
+    registrationId: string,
+    status: 'APPROVED' | 'REJECTED',
+  ) {
+    try {
+      await reviewBuyerRegistration(registrationId, status);
+      await loadBuyerRegistrations();
+    } catch {
+      setError('Nao foi possivel atualizar a solicitacao do comprador.');
+    }
+  }
+
   function renderLotImageInput() {
     return (
       <div className="image-upload-field">
@@ -472,6 +852,47 @@ function App() {
 
   function updateAuctionField(field: keyof AuctionFormState, value: string) {
     setAuctionForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function clearAuctionThumbnail() {
+    setAuctionThumbnail((current) => {
+      if (current) {
+        URL.revokeObjectURL(current.previewUrl);
+      }
+
+      return null;
+    });
+  }
+
+  function handleAuctionThumbnailChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file) {
+      return;
+    }
+
+    if (!acceptedAuctionThumbnailTypes.includes(file.type)) {
+      setError('Imagem inválida. Envie JPG, PNG ou WEBP.');
+      return;
+    }
+
+    if (file.size > auctionThumbnailMaxSize) {
+      setError('A imagem de capa deve ter no máximo 5 MB.');
+      return;
+    }
+
+    setError('');
+    setAuctionThumbnail((current) => {
+      if (current) {
+        URL.revokeObjectURL(current.previewUrl);
+      }
+
+      return {
+        file,
+        previewUrl: URL.createObjectURL(file),
+      };
+    });
   }
 
   function updateUserField(field: keyof UserFormState, value: string) {
@@ -527,6 +948,7 @@ function App() {
 
   function enterAuctionRoom(auctionId: string) {
     setSelectedAuctionId(auctionId);
+    setSelectedStreamState(null);
     setLotForm({ ...emptyLotForm, auctionId });
     setLotImages([]);
     setSelectedLotId(null);
@@ -623,6 +1045,12 @@ function App() {
         }
 
         persistUserAuth(auth.accessToken, auth.user);
+
+        if (auth.user.platformRole === 'SYSTEM_ADMIN') {
+          window.location.assign('/admin');
+          return;
+        }
+
         setCreatedUserName(auth.user.name);
         setCurrentUser(auth.user);
         setCurrentAuctionHouse(null);
@@ -757,10 +1185,25 @@ function App() {
     };
 
     try {
-      const auction = await createAuction(payload);
+      let auction = await createAuction(payload);
+
+      if (auctionThumbnail) {
+        try {
+          auction = await uploadAuctionThumbnail(auction.id, auctionThumbnail.file);
+        } catch (thumbnailError) {
+          setError(
+            parseApiErrorMessage(
+              thumbnailError,
+              'Remate criado, mas não foi possível salvar a imagem de capa.',
+            ),
+          );
+        }
+      }
+
       setCreatedAuctionId(auction.id);
       setSelectedAuctionId(auction.id);
       setAuctionForm(emptyAuctionForm);
+      clearAuctionThumbnail();
       await loadAuctions(true);
       setLotForm({ ...emptyLotForm, auctionId: auction.id });
       setView('auctionRoom');
@@ -811,7 +1254,108 @@ function App() {
     setCurrentUser(null);
     setCurrentAuctionHouse(null);
     setSelectedAuctionId(null);
+    setSelectedStreamState(null);
+    clearAuctionThumbnail();
     setView('home');
+  }
+
+  function showAccountDetails() {
+    setError('');
+    setView('accountDetails');
+  }
+
+  function showChangePasswordPlaceholder() {
+    setError('A alteração de senha ainda será disponibilizada nesta interface.');
+    setView('accountDetails');
+  }
+
+  function renderAccountDetails() {
+    if (currentAuctionHouse) {
+      const accountRows = [
+        ['Nome', currentAuctionHouse.name],
+        ['CNPJ/documento', currentAuctionHouse.document || '-'],
+        ['E-mail', currentAuctionHouse.email],
+        ['Telefone', currentAuctionHouse.phone || '-'],
+        ['Cidade', currentAuctionHouse.city || '-'],
+        ['Estado', currentAuctionHouse.state || '-'],
+        ['País', currentAuctionHouse.country || '-'],
+        ['Status da conta', currentAuctionHouse.status],
+      ];
+
+      return (
+        <section className="account-page">
+          <button className="text-action" type="button" onClick={() => setView('home')}>
+            Voltar aos remates
+          </button>
+          <div className="account-details-shell">
+            <div className="account-details-hero">
+              <span className="eyebrow">Dados do escritório</span>
+              <h1>{currentAuctionHouse.name}</h1>
+              <p>Informações públicas e operacionais da conta autenticada.</p>
+            </div>
+            <div className="account-details-card">
+              <div className="account-logo-preview">
+                {currentAuctionHouse.logoUrl ? (
+                  <img alt="" src={resolveMediaUrl(currentAuctionHouse.logoUrl)} />
+                ) : (
+                  <span>{currentAuctionHouse.name.slice(0, 2).toUpperCase()}</span>
+                )}
+              </div>
+              <dl className="account-data-grid">
+                {accountRows.map(([label, value]) => (
+                  <div key={label}>
+                    <dt>{label}</dt>
+                    <dd>{value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          </div>
+          {error && <p className="form-error">{error}</p>}
+        </section>
+      );
+    }
+
+    const producerStatus = currentUser?.sellerProfile
+      ? currentUser.sellerProfile.verificationStatus || 'Cadastrado'
+      : 'Não cadastrado';
+    const accountRows = [
+      ['Nome', currentUser?.name || '-'],
+      ['CPF/documento', currentUser?.document || '-'],
+      ['E-mail', currentUser?.email || '-'],
+      ['Telefone', currentUser?.phone || '-'],
+      ['Status da conta', currentUser?.status || '-'],
+      ['Status do cadastro de produtor', producerStatus],
+    ];
+
+    return (
+      <section className="account-page">
+        <button className="text-action" type="button" onClick={() => setView('home')}>
+          Voltar aos remates
+        </button>
+        <div className="account-details-shell">
+          <div className="account-details-hero">
+            <span className="eyebrow">Meus dados</span>
+            <h1>{currentUser?.name || 'Minha conta'}</h1>
+            <p>Informações da conta autenticada e situação do cadastro de produtor.</p>
+          </div>
+          <div className="account-details-card">
+            <div className="account-logo-preview">
+              <span>{(currentUser?.name || 'CA').slice(0, 2).toUpperCase()}</span>
+            </div>
+            <dl className="account-data-grid">
+              {accountRows.map(([label, value]) => (
+                <div key={label}>
+                  <dt>{label}</dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        </div>
+        {error && <p className="form-error">{error}</p>}
+      </section>
+    );
   }
 
   const canCompleteSellerProfile = Boolean(
@@ -1245,42 +1789,62 @@ function App() {
 
   return (
     <main className="app-shell">
-      <header className="topbar">
-        <button className="brand" type="button" onClick={() => setView('home')}>
-          <span className="brand-mark">CA</span>
-          <span>Cattle Auction</span>
-        </button>
-
-        <nav className="nav-actions" aria-label="Navegacao principal">
-          {currentAuctionHouse && (
-            <button
-              className={view === 'createAuction' ? 'nav-link active' : 'nav-link'}
-              type="button"
-              onClick={() => setView('createAuction')}
-            >
-              Criar remate
-            </button>
-          )}
-          {canCompleteSellerProfile && (
-            <button
-              className={view === 'sellerProfile' ? 'nav-link active' : 'nav-link'}
-              type="button"
-              onClick={() => setView('sellerProfile')}
-            >
-              Cadastro produtor
-            </button>
-          )}
+      <header className="sticky top-0 z-40 border-b border-border/70 bg-background shadow-[0_6px_20px_rgba(15,23,42,0.05)]">
+        <div className="mx-auto flex min-h-20 w-full max-w-7xl items-center justify-between gap-4 px-5 py-3 sm:px-8">
           <button
-            className={view === 'home' ? 'nav-link active' : 'nav-link'}
+            className="flex min-w-0 items-center gap-3 rounded-full text-left transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             type="button"
             onClick={() => setView('home')}
           >
-            Remates
+            <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary text-sm font-black text-primary-foreground shadow-[0_14px_32px_rgba(18,98,70,0.22)]">
+              CA
+            </span>
+            <span className="hidden min-w-0 sm:grid">
+              <strong className="text-base font-black leading-tight text-foreground">
+                Cattle Auction
+              </strong>
+              <small className="truncate text-xs font-bold text-muted-foreground">
+                Remates e transmissões ao vivo
+              </small>
+            </span>
           </button>
-          <button className="nav-link" type="button" onClick={handleLogout}>
-            Sair
-          </button>
+
+          <nav
+            className="flex min-w-0 items-center justify-end gap-2 sm:gap-3"
+            aria-label="Navegacao principal"
+          >
+            <Button
+              variant={view === 'home' ? 'secondary' : 'ghost'}
+              className="hidden rounded-full font-black sm:inline-flex"
+              type="button"
+              onClick={() => setView('home')}
+            >
+              <Radio className="size-4" />
+              Remates
+            </Button>
+          {currentAuctionHouse && (
+            <Button
+              className="rounded-full bg-primary px-4 font-black text-primary-foreground shadow-[0_14px_34px_rgba(18,98,70,0.22)] hover:bg-primary/90"
+              type="button"
+              onClick={() => setView('createAuction')}
+            >
+              <Plus className="size-4" />
+              Criar remate
+            </Button>
+          )}
+          <AccountMenu
+            currentUser={currentUser}
+            currentAuctionHouse={currentAuctionHouse}
+            onShowAccountDetails={showAccountDetails}
+            onShowSellerProfile={() => {
+              setError('');
+              setView('sellerProfile');
+            }}
+            onChangePassword={showChangePasswordPlaceholder}
+            onLogout={handleLogout}
+          />
         </nav>
+        </div>
       </header>
 
       {view === 'auctionRoom' ? (
@@ -1290,19 +1854,119 @@ function App() {
               Voltar aos remates
             </button>
 
-            <div className="auction-player">
-              <div className="player-status">
-                <span className="live-dot"></span>
-                <strong>{selectedAuction?.status || 'DRAFT'}</strong>
+            {selectedAuction && selectedAuctionStreamState?.canBroadcast ? (
+              <AuctionBroadcastControls
+                auction={selectedAuction}
+                lotsCount={selectedAuctionLots.length}
+                streamState={selectedAuctionStreamState}
+                onStreamStateChange={syncSelectedStreamState}
+              />
+            ) : (
+              <AuctionStreamPlayer
+                auction={selectedAuction}
+                lotsCount={selectedAuctionLots.length}
+                streamState={selectedAuctionStreamState}
+                onStreamStateChange={syncSelectedStreamState}
+              />
+            )}
+
+            {!canManageSelectedAuction && (
+              <div className="bid-bar">
+                {!inPistaLot ? (
+                  <p className="bid-bar-empty">Nenhum lote em pista no momento.</p>
+                ) : (
+                  <>
+                    <div className="bid-bar-info">
+                      <span className="eyebrow">Em pista</span>
+                      <strong>
+                        {inPistaLot.code} · {inPistaLot.title}
+                      </strong>
+                      <span className="bid-current">
+                        Lance atual:{' '}
+                        {formatCurrency(
+                          inPistaWinningBid?.amount ?? inPistaLot.initialPrice,
+                        )}
+                      </span>
+                    </div>
+
+                    {currentUser && !currentAuctionHouse && (
+                      <div className="bid-bar-action">
+                        {myRegistration === undefined ? (
+                          <span className="bid-hint">Verificando liberacao...</span>
+                        ) : myRegistration === null ? (
+                          <button
+                            className="primary-action"
+                            disabled={isSubmitting}
+                            type="button"
+                            onClick={handleRequestApproval}
+                          >
+                            Solicitar liberacao para lances
+                          </button>
+                        ) : myRegistration.status === 'PENDING' ? (
+                          <span className="bid-hint">
+                            Aguardando aprovacao do escritorio.
+                          </span>
+                        ) : myRegistration.status === 'BLOCKED' ? (
+                          <span className="bid-hint">
+                            Voce esta bloqueado para lances neste escritorio.
+                          </span>
+                        ) : myRegistration.status === 'REJECTED' ? (
+                          <button
+                            className="secondary-action"
+                            disabled={isSubmitting}
+                            type="button"
+                            onClick={handleRequestApproval}
+                          >
+                            Solicitacao negada - solicitar novamente
+                          </button>
+                        ) : (
+                          <form className="bid-form" onSubmit={handleSubmitBid}>
+                            <div className="bid-stepper">
+                              <input
+                                className="bid-input"
+                                min="0"
+                                step={BID_STEP}
+                                type="number"
+                                value={bidAmount}
+                                onChange={(event) => setBidAmount(event.target.value)}
+                                aria-label="Valor do lance"
+                              />
+                              <div className="bid-arrows">
+                                <button
+                                  className="bid-arrow"
+                                  type="button"
+                                  aria-label={`Aumentar ${BID_STEP}`}
+                                  onClick={() => stepBid(BID_STEP)}
+                                >
+                                  <ChevronUp />
+                                </button>
+                                <button
+                                  className="bid-arrow"
+                                  type="button"
+                                  aria-label={`Diminuir ${BID_STEP}`}
+                                  onClick={() => stepBid(-BID_STEP)}
+                                >
+                                  <ChevronDown />
+                                </button>
+                              </div>
+                            </div>
+                            <button
+                              className="primary-action"
+                              disabled={isSubmitting}
+                              type="submit"
+                            >
+                              {isSubmitting ? 'Enviando...' : 'Dar lance'}
+                            </button>
+                          </form>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {error && <p className="form-error">{error}</p>}
               </div>
-              <div className="player-center">
-                <span className="play-button large">Play</span>
-              </div>
-              <div className="player-footer">
-                <span>{selectedAuction?.mode || 'LIVE'}</span>
-                <span>{selectedAuctionLots.length} lotes</span>
-              </div>
-            </div>
+            )}
 
             <div className="auction-room-header">
               <div>
@@ -1452,6 +2116,46 @@ function App() {
                   {isSubmitting ? 'Adicionando...' : 'Adicionar lote'}
                 </button>
               </form>
+
+              <div className="form-header compact">
+                <h2>Compradores</h2>
+              </div>
+
+              {isLoadingBuyerRegistrations ? (
+                <p className="loading-message">Carregando solicitacoes...</p>
+              ) : buyerRegistrations.length === 0 ? (
+                <p className="loading-message">Nenhuma solicitacao de comprador ainda.</p>
+              ) : (
+                <ul className="buyer-registration-list">
+                  {buyerRegistrations.map((registration) => (
+                    <li key={registration.id}>
+                      <div>
+                        <strong>{registration.buyer?.name || 'Comprador'}</strong>
+                        <small>{registration.buyer?.email}</small>
+                      </div>
+                      <span>{registration.status}</span>
+                      {registration.status === 'PENDING' && (
+                        <div className="modal-actions">
+                          <button
+                            className="primary-action"
+                            type="button"
+                            onClick={() => handleReviewRegistration(registration.id, 'APPROVED')}
+                          >
+                            Aprovar
+                          </button>
+                          <button
+                            className="secondary-action"
+                            type="button"
+                            onClick={() => handleReviewRegistration(registration.id, 'REJECTED')}
+                          >
+                            Rejeitar
+                          </button>
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </aside>
           )}
 
@@ -1518,6 +2222,89 @@ function App() {
                 {canManageSelectedAuction && (
                   <div className="detail-image-editor">
                     <div className="form-header compact">
+                      <h2>Lote em pista</h2>
+                    </div>
+
+                    <p className="loading-message compact">
+                      {selectedLot.status === 'IN_AUCTION'
+                        ? 'Este lote esta em pista e recebendo lances.'
+                        : selectedLot.status === 'AVAILABLE'
+                          ? 'Lote liberado, aguardando ser colocado em pista.'
+                          : `Status atual: ${selectedLot.status}`}
+                    </p>
+
+                    <div className="modal-actions">
+                      {selectedLot.status !== 'AVAILABLE' &&
+                        selectedLot.status !== 'IN_AUCTION' && (
+                          <button
+                            className="secondary-action"
+                            disabled={isSubmitting}
+                            type="button"
+                            onClick={() => handleSetLotStage('AVAILABLE')}
+                          >
+                            Liberar lote
+                          </button>
+                        )}
+
+                      {selectedLot.status === 'AVAILABLE' && (
+                        <button
+                          className="primary-action"
+                          disabled={isSubmitting}
+                          type="button"
+                          onClick={() => handleSetLotStage('IN_AUCTION')}
+                        >
+                          Colocar em pista
+                        </button>
+                      )}
+
+                      {selectedLot.status === 'IN_AUCTION' && (
+                        <button
+                          className="secondary-action"
+                          disabled={isSubmitting}
+                          type="button"
+                          onClick={() => handleSetLotStage('AVAILABLE')}
+                        >
+                          Retirar de pista
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="detail-image-editor">
+                  <div className="form-header compact">
+                    <h2>Lances</h2>
+                  </div>
+
+                  <p className="loading-message compact">
+                    Lance atual:{' '}
+                    {formatCurrency(lotWinningBid?.amount ?? selectedLot.initialPrice)}
+                  </p>
+
+                  {selectedLot.bids?.length ? (
+                    <ul className="bid-history">
+                      {selectedLot.bids.map((bid) => (
+                        <li key={bid.id}>
+                          <span>{bid.bidder?.name || 'Comprador'}</span>
+                          <strong>{formatCurrency(bid.amount)}</strong>
+                          <small>{bid.status}</small>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="loading-message compact">Nenhum lance registrado ainda.</p>
+                  )}
+
+                  {currentUser && !currentAuctionHouse && (
+                    <p className="loading-message compact">
+                      Os lances sao feitos pela barra abaixo do video, no lote em pista.
+                    </p>
+                  )}
+                </div>
+
+                {canManageSelectedAuction && (
+                  <div className="detail-image-editor">
+                    <div className="form-header compact">
                       <h2>Adicionar imagens</h2>
                     </div>
 
@@ -1564,6 +2351,8 @@ function App() {
             </div>
           )}
         </section>
+      ) : view === 'accountDetails' ? (
+        renderAccountDetails()
       ) : view === 'createAuction' ? (
         <section className="register-page">
           <div className="register-copy">
@@ -1582,20 +2371,22 @@ function App() {
 
             <label>
               Titulo
-              <input
+              <Input
                 required
                 value={auctionForm.title}
                 onChange={(event) => updateAuctionField('title', event.target.value)}
                 placeholder="Remate Primavera 2026"
+                className="mt-2 h-12 rounded-xl border-primary/15 bg-white/75 font-semibold"
               />
             </label>
 
             <label>
               Data e hora
-              <input
+              <Input
                 type="datetime-local"
                 value={auctionForm.scheduledAt}
                 onChange={(event) => updateAuctionField('scheduledAt', event.target.value)}
+                className="mt-2 h-12 rounded-xl border-primary/15 bg-white/75 font-semibold"
               />
             </label>
 
@@ -1607,6 +2398,46 @@ function App() {
                 placeholder="Conjunto de lotes, condicoes comerciais e detalhes do evento."
               />
             </label>
+
+            <div className="auction-cover-field">
+              <div>
+                <span>Imagem de capa do remate</span>
+                <small>JPG, PNG ou WEBP. Tamanho máximo de 5 MB.</small>
+              </div>
+
+              {auctionThumbnail ? (
+                <div className="auction-cover-preview">
+                  <img alt="" src={auctionThumbnail.previewUrl} />
+                  <div>
+                    <strong>{auctionThumbnail.file.name}</strong>
+                    <span>{(auctionThumbnail.file.size / 1024 / 1024).toFixed(2)} MB</span>
+                    <div className="auction-cover-actions">
+                      <label className="secondary-action">
+                        Substituir imagem
+                        <input
+                          accept="image/jpeg,image/png,image/webp"
+                          type="file"
+                          onChange={handleAuctionThumbnailChange}
+                        />
+                      </label>
+                      <button className="inline-helper-action" type="button" onClick={clearAuctionThumbnail}>
+                        Remover imagem
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <label className="auction-cover-dropzone">
+                  <span>Selecionar imagem do dispositivo</span>
+                  <small>A capa será exibida nos cards de remates disponíveis.</small>
+                  <input
+                    accept="image/jpeg,image/png,image/webp"
+                    type="file"
+                    onChange={handleAuctionThumbnailChange}
+                  />
+                </label>
+              )}
+            </div>
 
             {error && <p className="form-error">{error}</p>}
 
@@ -1887,30 +2718,125 @@ function App() {
           </form>
         </section>
       ) : (
-        <section className="home-page">
-          <div className="home-heading">
-            <div>
-              <span className="eyebrow">Remates</span>
-              <h1>Remates disponiveis</h1>
+        <section className="mx-auto grid w-full max-w-7xl gap-8 px-5 py-10 sm:px-8 lg:py-12">
+          <div className="relative overflow-hidden rounded-[28px] border border-primary/10 bg-card/95 p-6 shadow-[0_24px_80px_rgba(15,23,42,0.09)] sm:p-8">
+            <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_18%_20%,rgba(18,98,70,0.12),transparent_36%),linear-gradient(135deg,rgba(255,255,255,0.70),rgba(231,242,236,0.52))]" />
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+              <div className="max-w-3xl">
+                <span className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary/8 px-3 py-1 text-xs font-black uppercase tracking-[0.16em] text-primary">
+                  <Radio className="size-3.5" />
+                  REMATES
+                </span>
+                <h1 className="mt-4 text-4xl font-black tracking-tight text-foreground sm:text-5xl">
+                  Remates disponíveis
+                </h1>
+                <p className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
+                  Acompanhe transmissões ao vivo, consulte os próximos eventos e
+                  acesse os lotes disponíveis em cada escritório leiloeiro.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                {canCompleteSellerProfile && (
+                  <Button
+                    variant="secondary"
+                    className="rounded-full font-black"
+                    type="button"
+                    onClick={() => setView('sellerProfile')}
+                  >
+                    <Sprout className="size-4" />
+                    Cadastro de produtor
+                  </Button>
+                )}
+                {currentAuctionHouse ? (
+                  <Button
+                    className="rounded-full bg-primary px-5 font-black text-primary-foreground shadow-[0_14px_34px_rgba(18,98,70,0.22)] hover:bg-primary/90"
+                    type="button"
+                    onClick={() => setView('createAuction')}
+                  >
+                    <Plus className="size-4" />
+                    Criar remate
+                  </Button>
+                ) : null}
+              </div>
             </div>
-            {currentAuctionHouse ? (
-              <button
-                className="secondary-action"
-                type="button"
-                onClick={() => setView('createAuction')}
-              >
-                Criar remate
-              </button>
-            ) : null}
-            {canCompleteSellerProfile && (
-              <button
-                className="secondary-action"
-                type="button"
-                onClick={() => setView('sellerProfile')}
-              >
-                Completar cadastro de produtor
-              </button>
-            )}
+
+            <Separator className="my-6 bg-border/80" />
+
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="flex items-center gap-3 text-sm font-bold text-muted-foreground">
+                <span className="grid size-10 place-items-center rounded-full bg-secondary text-primary">
+                  <Search className="size-4" />
+                </span>
+                <span>
+                  {visibleAuctions.length}{' '}
+                  {visibleAuctions.length === 1 ? 'remate encontrado' : 'remates encontrados'}
+                </span>
+              </div>
+
+              <div className="hidden md:block">
+                <Select
+                  value={auctionStatusFilter}
+                  onValueChange={(value) =>
+                    setAuctionStatusFilter(value as AuctionStatusFilter)
+                  }
+                >
+                  <SelectTrigger className="h-11 w-56 rounded-full border-primary/15 bg-white font-bold shadow-sm">
+                    <SelectValue placeholder="Filtrar remates" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-2xl border-primary/10 bg-popover/95 p-1 shadow-[0_24px_70px_rgba(15,23,42,0.16)] backdrop-blur-xl">
+                    <SelectItem value="ALL">Todos os remates</SelectItem>
+                    <SelectItem value="LIVE">Ao vivo</SelectItem>
+                    <SelectItem value="SCHEDULED">Agendados</SelectItem>
+                    <SelectItem value="FINISHED">Finalizados</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <Sheet>
+                <SheetTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="rounded-full border-primary/15 bg-white/70 font-black shadow-sm backdrop-blur md:hidden"
+                    type="button"
+                  >
+                    <Search className="size-4" />
+                    Filtrar
+                  </Button>
+                </SheetTrigger>
+                <SheetContent
+                  side="bottom"
+                  className="rounded-t-[24px] border-primary/10 bg-popover/95 p-6 shadow-[0_-24px_70px_rgba(15,23,42,0.16)] backdrop-blur-xl"
+                >
+                  <SheetHeader>
+                    <SheetTitle className="text-xl font-black text-foreground">
+                      Filtrar remates
+                    </SheetTitle>
+                    <SheetDescription className="font-medium text-muted-foreground">
+                      Escolha o status dos eventos exibidos na listagem.
+                    </SheetDescription>
+                  </SheetHeader>
+                  <div className="mt-5">
+                    <Select
+                      value={auctionStatusFilter}
+                      onValueChange={(value) =>
+                        setAuctionStatusFilter(value as AuctionStatusFilter)
+                      }
+                    >
+                      <SelectTrigger className="h-12 rounded-xl border-primary/15 bg-white/75 font-bold">
+                        <SelectValue placeholder="Filtrar remates" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ALL">Todos os remates</SelectItem>
+                        <SelectItem value="LIVE">Ao vivo</SelectItem>
+                        <SelectItem value="SCHEDULED">Agendados</SelectItem>
+                        <SelectItem value="FINISHED">Finalizados</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </SheetContent>
+              </Sheet>
+            </div>
           </div>
 
           {createdUserName && (
@@ -1928,68 +2854,38 @@ function App() {
           )}
 
           {isLoadingAuctions ? (
-            <p className="loading-message">Carregando remates...</p>
-          ) : visibleAuctions.length === 0 ? (
-            <p className="loading-message">Nenhum remate disponivel no momento.</p>
+            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <AuctionCardSkeleton key={index} />
+              ))}
+            </div>
+          ) : filteredVisibleAuctions.length === 0 ? (
+            <div className="rounded-[22px] border border-dashed border-primary/20 bg-card/65 p-10 text-center shadow-[0_18px_55px_rgba(15,23,42,0.07)] backdrop-blur">
+              <CalendarDays className="mx-auto mb-4 size-10 text-primary" />
+              <h2 className="text-2xl font-black text-foreground">
+                Nenhum remate disponível no momento.
+              </h2>
+              <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
+                Quando novos eventos forem publicados, eles aparecerão aqui com a
+                imagem de capa, status da transmissão e informações dos lotes.
+              </p>
+            </div>
           ) : (
-            <div className="auction-grid">
-              {visibleAuctions.map((auction) => {
+            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+              {filteredVisibleAuctions.map((auction, index) => {
                 const auctionLotCount = getAuctionLotCount(auction);
                 const isOwnAuction = isAuctionOwnedByCurrentOffice(auction);
 
                 return (
-                  <article
-                    className={
-                      auction.id === createdAuctionId
-                        ? 'auction-card highlighted'
-                        : 'auction-card'
-                    }
+                  <AuctionCard
                     key={auction.id}
-                  >
-                    <button
-                      aria-label={`Entrar no remate ${auction.title}`}
-                      className="auction-card-player"
-                      type="button"
-                      onClick={() => enterAuctionRoom(auction.id)}
-                    >
-                      <span className="live-dot"></span>
-                      <span className="play-button">Play</span>
-                    </button>
-                    <div className="auction-card-body">
-                      <span className="eyebrow">
-                        {currentAuctionHouse && isOwnAuction
-                          ? `Meu escritorio - ${auction.status}`
-                          : auction.status}
-                      </span>
-                      <h2>{auction.title}</h2>
-                      <p>{auction.description || 'Remate disponivel para acompanhamento online.'}</p>
-                      <dl className="lot-stats">
-                        <div>
-                          <dt>Lotes</dt>
-                          <dd>{auctionLotCount}</dd>
-                        </div>
-                        <div>
-                          <dt>Escritorio</dt>
-                          <dd>{auction.auctionHouse?.name || '-'}</dd>
-                        </div>
-                        <div>
-                          <dt>Data</dt>
-                          <dd className="date-value">
-                            {auction.scheduledAt
-                              ? new Date(auction.scheduledAt).toLocaleDateString('pt-BR')
-                              : '-'}
-                          </dd>
-                        </div>
-                      </dl>
-                      <button
-                        className="primary-action"
-                        type="button"
-                        onClick={() => enterAuctionRoom(auction.id)}
-                      >
-                        Entrar no remate
-                      </button>
-                    </div>
-                  </article>
+                    auction={auction}
+                    lotCount={auctionLotCount}
+                    isOwnAuction={Boolean(currentAuctionHouse && isOwnAuction)}
+                    isHighlighted={auction.id === createdAuctionId}
+                    onEnter={enterAuctionRoom}
+                    index={index}
+                  />
                 );
               })}
             </div>

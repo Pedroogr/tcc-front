@@ -15,3 +15,19 @@ export function createAuction(payload: CreateAuctionPayload) {
     body: JSON.stringify(payload),
   });
 }
+
+export function uploadAuctionThumbnail(auctionId: string, file: File) {
+  const formData = new FormData();
+  formData.append('thumbnail', file);
+
+  return apiRequest<Auction>(`/auctions/${auctionId}/thumbnail`, {
+    method: 'POST',
+    body: formData,
+  });
+}
+
+export function deleteAuctionThumbnail(auctionId: string) {
+  return apiRequest<Auction>(`/auctions/${auctionId}/thumbnail`, {
+    method: 'DELETE',
+  });
+}

@@ -7,6 +7,7 @@ export type SellerProfile = {
   city?: string | null;
   state?: string | null;
   country?: string | null;
+  verificationStatus?: string | null;
   createdAt: string;
   updatedAt: string;
 };

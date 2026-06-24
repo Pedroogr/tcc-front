@@ -38,6 +38,12 @@ export function listMyBuyerRegistrations() {
   return apiRequest<BuyerRegistration[]>('/auction-houses/me/buyer-registrations');
 }
 
+export function getMyBuyerRegistration(auctionHouseId: string) {
+  return apiRequest<BuyerRegistration | null>(
+    `/auction-houses/${auctionHouseId}/buyer-registrations/me`,
+  );
+}
+
 export function reviewBuyerRegistration(
   registrationId: string,
   status: BuyerRegistrationStatus,
