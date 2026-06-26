@@ -19,6 +19,34 @@ const rtcConfig: RTCConfiguration = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
 };
 
+function getCenterMessage(
+  isWebRtcSupported: boolean,
+  error: string,
+  message: string,
+  streamStatus: string | undefined,
+  isLive: boolean,
+) {
+  if (!isWebRtcSupported) {
+    return 'Seu navegador não oferece suporte a WebRTC.';
+  }
+  if (error) {
+    return error;
+  }
+  if (message) {
+    return message;
+  }
+  if (streamStatus === 'ENDED') {
+    return 'A transmissão foi encerrada pelo escritório.';
+  }
+  if (streamStatus === 'ERROR') {
+    return 'A transmissão foi interrompida. Aguardando retomada.';
+  }
+  if (isLive) {
+    return 'Conectando à transmissão...';
+  }
+  return 'Aguardando início da transmissão.';
+}
+
 function closePeerConnection(peerConnection: RTCPeerConnection | null) {
   if (!peerConnection) {
     return;
@@ -214,17 +242,13 @@ export function AuctionStreamPlayer({
     ? formatStreamStatus(streamStatus)
     : formatAuctionStatus(streamState?.auction.status ?? auction?.status);
   const isLive = streamStatus === 'LIVE';
-  const centerMessage =
-    (!isWebRtcSupported && 'Seu navegador não oferece suporte a WebRTC.') ||
-    error ||
-    message ||
-    (streamStatus === 'ENDED'
-      ? 'A transmissão foi encerrada pelo escritório.'
-      : streamStatus === 'ERROR'
-        ? 'A transmissão foi interrompida. Aguardando retomada.'
-      : isLive
-        ? 'Conectando à transmissão...'
-        : 'Aguardando início da transmissão.');
+  const centerMessage = getCenterMessage(
+    isWebRtcSupported,
+    error,
+    message,
+    streamStatus,
+    isLive,
+  );
 
   return (
     <div className={remoteStream ? 'auction-player has-video' : 'auction-player'}>

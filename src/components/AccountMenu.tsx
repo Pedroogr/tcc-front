@@ -3,9 +3,11 @@ import type { ComponentType } from 'react';
 import {
   Building2,
   ChevronDown,
+  Gavel,
   KeyRound,
   LogOut,
   Sprout,
+  Trophy,
   UserRound,
 } from 'lucide-react';
 import type { AuctionHouse, User } from '@/types/user';
@@ -25,6 +27,8 @@ type AccountMenuProps = {
   currentAuctionHouse: AuctionHouse | null;
   onShowAccountDetails: () => void;
   onShowSellerProfile: () => void;
+  onShowSales: () => void;
+  onShowMyWins: () => void;
   onChangePassword: () => void;
   onLogout: () => void;
 };
@@ -68,6 +72,8 @@ export function AccountMenu({
   currentAuctionHouse,
   onShowAccountDetails,
   onShowSellerProfile,
+  onShowSales,
+  onShowMyWins,
   onChangePassword,
   onLogout,
 }: AccountMenuProps) {
@@ -128,13 +134,21 @@ export function AccountMenu({
           <DropdownMenuSeparator className="my-2 bg-border" />
 
           {currentAuctionHouse ? (
-            <AccountMenuItem icon={Building2} onSelect={onShowAccountDetails}>
-              Dados do escritório
-            </AccountMenuItem>
+            <>
+              <AccountMenuItem icon={Building2} onSelect={onShowAccountDetails}>
+                Dados do escritório
+              </AccountMenuItem>
+              <AccountMenuItem icon={Gavel} onSelect={onShowSales}>
+                Vendas / Arremates
+              </AccountMenuItem>
+            </>
           ) : (
             <>
               <AccountMenuItem icon={UserRound} onSelect={onShowAccountDetails}>
                 Meus dados
+              </AccountMenuItem>
+              <AccountMenuItem icon={Trophy} onSelect={onShowMyWins}>
+                Meus arremates
               </AccountMenuItem>
               <AccountMenuItem icon={Sprout} onSelect={onShowSellerProfile}>
                 Cadastro de produtor

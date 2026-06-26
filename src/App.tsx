@@ -19,10 +19,13 @@ import {
 } from './api/auctionHousesApi';
 import { apiUrl, authStorage } from './api/http';
 import { createBid, createLot, listLots, updateLot } from './api/lotsApi';
+import { listAuctionHouseSales, listMyWins } from './api/salesApi';
+import { createNotificationSocket } from './api/socket';
 import { upsertSellerProfile } from './api/usersApi';
 import { AccountMenu } from './components/AccountMenu';
 import { AuctionCard, AuctionCardSkeleton } from './components/AuctionCard';
 import { AuctionBroadcastControls } from './components/AuctionBroadcastControls';
+import { DeclareWinnerPanel } from './components/DeclareWinnerPanel';
 import { AuctionStreamPlayer } from './components/AuctionStreamPlayer';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
@@ -45,6 +48,7 @@ import {
 import type { Auction, AuctionStreamState } from './types/auction';
 import type { CreateAuctionPayload } from './types/auction';
 import type { CreateLotPayload, Lot, LotImagePayload } from './types/lot';
+import type { Sale, SaleWonNotification } from './types/sale';
 import type {
   AuctionHouse,
   BuyerRegistration,
@@ -66,6 +70,11 @@ import {
   validateCpfOrCnpj,
   validatePhone,
 } from './utils/brFields';
+import {
+  formatBidStatus,
+  formatLotStatus,
+  formatRegistrationStatus,
+} from './utils/auctionLabels';
 import {
   CalendarDays,
   ChevronDown,
@@ -135,7 +144,9 @@ type View =
   | 'sellerProfile'
   | 'createAuction'
   | 'auctionRoom'
-  | 'accountDetails';
+  | 'accountDetails'
+  | 'sales'
+  | 'myWins';
 type AuthMode = 'login' | 'register';
 type AuctionStatusFilter = 'ALL' | 'LIVE' | 'SCHEDULED' | 'FINISHED';
 
@@ -276,6 +287,42 @@ function persistAuctionHouseAuth(accessToken: string, auctionHouse: AuctionHouse
   localStorage.removeItem(authStorage.userKey);
 }
 
+function getAuthSubmitLabel(isSubmitting: boolean, authMode: AuthMode) {
+  if (isSubmitting) {
+    return 'Processando...';
+  }
+  if (authMode === 'register') {
+    return 'Criar conta e entrar';
+  }
+  return 'Entrar';
+}
+
+function getLotStageMessage(status: string, consignmentId?: string | null) {
+  if (status === 'IN_AUCTION') {
+    return 'Este lote está em pista e recebendo lances.';
+  }
+  if (status === 'AVAILABLE') {
+    return 'Lote liberado, aguardando ser colocado em pista.';
+  }
+  // UNDER_REVIEW only means "awaiting confirmation" when the lot came from a
+  // seller's consignment. A lot the auction house registered itself is
+  // already approved, even if its stored status still says UNDER_REVIEW.
+  if (status === 'UNDER_REVIEW' && consignmentId) {
+    return 'Lote enviado por um vendedor, aguardando sua confirmação.';
+  }
+  return 'Lote pronto para ser liberado.';
+}
+
+function getLotSubmitLabel(isSubmitting: boolean, currentAuctionHouse: AuctionHouse | null) {
+  if (isSubmitting) {
+    return 'Enviando...';
+  }
+  if (currentAuctionHouse) {
+    return 'Adicionar lote ao remate';
+  }
+  return 'Enviar para aprovacao';
+}
+
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() =>
     Boolean(localStorage.getItem(authStorage.tokenKey)),
@@ -330,6 +377,11 @@ function App() {
   const [currentAuctionHouse, setCurrentAuctionHouse] = useState<AuctionHouse | null>(() =>
     getStoredAuctionHouse(),
   );
+  const [auctionHouseSales, setAuctionHouseSales] = useState<Sale[]>([]);
+  const [isLoadingSales, setIsLoadingSales] = useState(false);
+  const [myWins, setMyWins] = useState<Sale[]>([]);
+  const [isLoadingMyWins, setIsLoadingMyWins] = useState(false);
+  const [winToast, setWinToast] = useState<SaleWonNotification | null>(null);
 
   const isAuctionOwnedByCurrentOffice = useCallback(
     (auction: Auction) =>
@@ -512,6 +564,54 @@ function App() {
       // mantem a ultima lista carregada se a atualizacao silenciosa falhar
     }
   }
+
+  const loadAuctionHouseSales = useCallback(async () => {
+    setIsLoadingSales(true);
+
+    try {
+      setAuctionHouseSales(await listAuctionHouseSales());
+    } catch {
+      setAuctionHouseSales([]);
+    } finally {
+      setIsLoadingSales(false);
+    }
+  }, []);
+
+  const loadMyWins = useCallback(async () => {
+    setIsLoadingMyWins(true);
+
+    try {
+      setMyWins(await listMyWins());
+    } catch {
+      setMyWins([]);
+    } finally {
+      setIsLoadingMyWins(false);
+    }
+  }, []);
+
+  // Notificacao em tempo real: avisa o comprador quando um lance dele vence.
+  useEffect(() => {
+    if (!isAuthenticated || !currentUser || currentAuctionHouse) {
+      return;
+    }
+
+    const socket = createNotificationSocket();
+
+    socket.on('connect', () => {
+      socket.emit('notifications:join');
+    });
+
+    socket.on('sale:won', (payload) => {
+      setWinToast(payload);
+      void loadMyWins();
+      void refreshLotsQuietly();
+    });
+
+    return () => {
+      socket.removeAllListeners();
+      socket.disconnect();
+    };
+  }, [isAuthenticated, currentUser, currentAuctionHouse, loadMyWins]);
 
   const loadAuctions = useCallback(async (includePrivateAuctions = Boolean(currentAuctionHouse)) => {
     setIsLoadingAuctions(true);
@@ -999,7 +1099,7 @@ function App() {
       });
 
       if (!auth.user) {
-        throw new Error('Login de usuario invalido');
+        throw new Error('Login de usuário inválido');
       }
 
       persistUserAuth(auth.accessToken, auth.user);
@@ -1013,7 +1113,7 @@ function App() {
       setIsAuthenticated(true);
       setView('home');
     } catch {
-      setError('Nao foi possivel cadastrar o usuario. Confira os dados e tente novamente.');
+      setError('Não foi possível cadastrar o usuário. Confira os dados e tente novamente.');
     } finally {
       setIsSubmitting(false);
     }
@@ -1032,7 +1132,7 @@ function App() {
 
       if (auth.actorType === 'AUCTION_HOUSE') {
         if (!auth.auctionHouse) {
-          throw new Error('Login de escritorio invalido');
+          throw new Error('Login de escritório inválido');
         }
 
         persistAuctionHouseAuth(auth.accessToken, auth.auctionHouse);
@@ -1041,7 +1141,7 @@ function App() {
         setCurrentUser(null);
       } else {
         if (!auth.user) {
-          throw new Error('Login de usuario invalido');
+          throw new Error('Login de usuário inválido');
         }
 
         persistUserAuth(auth.accessToken, auth.user);
@@ -1060,7 +1160,7 @@ function App() {
       setIsAuthenticated(true);
       setView('home');
     } catch {
-      setError('E-mail ou senha invalidos.');
+      setError('E-mail ou senha inválidos.');
     } finally {
       setIsSubmitting(false);
     }
@@ -1127,12 +1227,14 @@ function App() {
     setIsSubmitting(true);
     setError('');
 
-    const selectedAuctionId =
-      view === 'auctionRoom' && selectedAuction && canManageSelectedAuction
-        ? selectedAuction.id
-        : selectableAuctions.some((auction) => auction.id === lotForm.auctionId)
-          ? lotForm.auctionId
-          : selectableAuctions[0]?.id || '';
+    let selectedAuctionId: string;
+    if (view === 'auctionRoom' && selectedAuction && canManageSelectedAuction) {
+      selectedAuctionId = selectedAuction.id;
+    } else if (selectableAuctions.some((auction) => auction.id === lotForm.auctionId)) {
+      selectedAuctionId = lotForm.auctionId;
+    } else {
+      selectedAuctionId = selectableAuctions[0]?.id || '';
+    }
 
     const payload: CreateLotPayload = {
       code: lotForm.code.trim(),
@@ -1435,7 +1537,7 @@ function App() {
                       onChange={(event) =>
                         updateAuctionHouseInviteField('password', event.target.value)
                       }
-                      placeholder="Minimo 6 caracteres"
+                      placeholder="Mínimo 6 caracteres"
                     />
                   </label>
                 </div>
@@ -1546,7 +1648,7 @@ function App() {
             <h1>Acesso aos remates</h1>
             <p>
               Entre com seu e-mail e senha. O sistema identifica automaticamente
-              contas de usuarios e escritorios.
+              contas de usuários e escritórios.
             </p>
           </div>
 
@@ -1580,7 +1682,7 @@ function App() {
             <div className="form-header">
               <h2>
                 {authMode === 'register'
-                  ? 'Cadastro de usuario'
+                  ? 'Cadastro de usuário'
                   : 'Entrar na conta'}
               </h2>
             </div>
@@ -1636,7 +1738,7 @@ function App() {
                   type="password"
                   value={userForm.password}
                   onChange={(event) => updateUserField('password', event.target.value)}
-                  placeholder="Minimo 6 caracteres"
+                  placeholder="Mínimo 6 caracteres"
                 />
               </label>
             </div>
@@ -1695,7 +1797,7 @@ function App() {
 
                     <div className="form-grid">
                       <label>
-                        Inscricao rural
+                        Inscrição rural
                         <input
                           value={sellerProfileForm.ruralRegistration}
                           onChange={(event) =>
@@ -1709,7 +1811,7 @@ function App() {
                       </label>
 
                       <label>
-                        Inscricao estadual
+                        Inscrição estadual
                         <input
                           value={sellerProfileForm.stateRegistration}
                           onChange={(event) =>
@@ -1751,7 +1853,7 @@ function App() {
                       </label>
 
                       <label>
-                        Pais
+                        País
                         <input
                           value={sellerProfileForm.country}
                           onChange={(event) =>
@@ -1768,18 +1870,14 @@ function App() {
 
             {authMode === 'login' && (
               <p className="helper-message">
-                Escritorios usam as credenciais institucionais criadas pelo sistema.
+                Escritórios usam as credenciais institucionais criadas pelo sistema.
               </p>
             )}
 
             {error && <p className="form-error">{error}</p>}
 
             <button className="primary-action" disabled={isSubmitting} type="submit">
-              {isSubmitting
-                ? 'Processando...'
-                : authMode === 'register'
-                  ? 'Criar conta e entrar'
-                  : 'Entrar'}
+              {getAuthSubmitLabel(isSubmitting, authMode)}
             </button>
           </form>
         </section>
@@ -1840,12 +1938,53 @@ function App() {
               setError('');
               setView('sellerProfile');
             }}
+            onShowSales={() => {
+              setError('');
+              setView('sales');
+              void loadAuctionHouseSales();
+            }}
+            onShowMyWins={() => {
+              setError('');
+              setView('myWins');
+              void loadMyWins();
+            }}
             onChangePassword={showChangePasswordPlaceholder}
             onLogout={handleLogout}
           />
         </nav>
         </div>
       </header>
+
+      {winToast && (
+        <div className="win-toast" role="status">
+          <div className="win-toast-body">
+            <strong>Você arrematou o lote {winToast.lotCode}! 🎉</strong>
+            <span>
+              {winToast.lotTitle} · {formatCurrency(winToast.finalPrice)}
+            </span>
+          </div>
+          <div className="win-toast-actions">
+            <button
+              className="secondary-action"
+              type="button"
+              onClick={() => {
+                setWinToast(null);
+                setView('myWins');
+                void loadMyWins();
+              }}
+            >
+              Ver meus arremates
+            </button>
+            <button
+              className="text-action"
+              type="button"
+              onClick={() => setWinToast(null)}
+            >
+              Dispensar
+            </button>
+          </div>
+        </div>
+      )}
 
       {view === 'auctionRoom' ? (
         <section className="auction-room">
@@ -1867,6 +2006,14 @@ function App() {
                 lotsCount={selectedAuctionLots.length}
                 streamState={selectedAuctionStreamState}
                 onStreamStateChange={syncSelectedStreamState}
+              />
+            )}
+
+            {canManageSelectedAuction && (
+              <DeclareWinnerPanel
+                inPistaLot={inPistaLot}
+                winningBid={inPistaWinningBid}
+                onDeclared={refreshLotsQuietly}
               />
             )}
 
@@ -2013,7 +2160,9 @@ function App() {
                         <span>{formatCurrency(lot.initialPrice)}</span>
                       </div>
                       <small>
-                        {lot.media?.length ? `${lot.media.length} imagens` : lot.status}
+                        {lot.media?.length
+                          ? `${lot.media.length} imagens`
+                          : formatLotStatus(lot.status)}
                       </small>
                     </button>
                   ))}
@@ -2133,7 +2282,7 @@ function App() {
                         <strong>{registration.buyer?.name || 'Comprador'}</strong>
                         <small>{registration.buyer?.email}</small>
                       </div>
-                      <span>{registration.status}</span>
+                      <span>{formatRegistrationStatus(registration.status)}</span>
                       {registration.status === 'PENDING' && (
                         <div className="modal-actions">
                           <button
@@ -2213,7 +2362,7 @@ function App() {
                   </div>
                   <div>
                     <dt>Status</dt>
-                    <dd>{selectedLot.status}</dd>
+                    <dd>{formatLotStatus(selectedLot.status)}</dd>
                   </div>
                 </dl>
 
@@ -2222,15 +2371,11 @@ function App() {
                 {canManageSelectedAuction && (
                   <div className="detail-image-editor">
                     <div className="form-header compact">
-                      <h2>Lote em pista</h2>
+                      <h2>Gerenciar lote</h2>
                     </div>
 
                     <p className="loading-message compact">
-                      {selectedLot.status === 'IN_AUCTION'
-                        ? 'Este lote esta em pista e recebendo lances.'
-                        : selectedLot.status === 'AVAILABLE'
-                          ? 'Lote liberado, aguardando ser colocado em pista.'
-                          : `Status atual: ${selectedLot.status}`}
+                      {getLotStageMessage(selectedLot.status, selectedLot.consignmentId)}
                     </p>
 
                     <div className="modal-actions">
@@ -2287,7 +2432,7 @@ function App() {
                         <li key={bid.id}>
                           <span>{bid.bidder?.name || 'Comprador'}</span>
                           <strong>{formatCurrency(bid.amount)}</strong>
-                          <small>{bid.status}</small>
+                          <small>{formatBidStatus(bid.status)}</small>
                         </li>
                       ))}
                     </ul>
@@ -2473,7 +2618,7 @@ function App() {
 
             <div className="form-grid">
               <label>
-                Inscricao rural
+                Inscrição rural
                 <input
                   value={sellerProfileForm.ruralRegistration}
                   onChange={(event) =>
@@ -2484,7 +2629,7 @@ function App() {
               </label>
 
               <label>
-                Inscricao estadual
+                Inscrição estadual
                 <input
                   value={sellerProfileForm.stateRegistration}
                   onChange={(event) =>
@@ -2533,6 +2678,125 @@ function App() {
               {isSubmitting ? 'Salvando...' : 'Salvar e solicitar lote'}
             </button>
           </form>
+        </section>
+      ) : view === 'sales' ? (
+        <section className="sales-page">
+          <button className="text-action" type="button" onClick={() => setView('home')}>
+            Voltar aos remates
+          </button>
+
+          <div className="form-header">
+            <span className="eyebrow">Escritório</span>
+            <h1>Vendas / Arremates</h1>
+            <p>
+              Compradores vencedores de cada lote, com os contatos para combinar
+              o transporte e a logística.
+            </p>
+          </div>
+
+          {isLoadingSales ? (
+            <p className="loading-message">Carregando vendas...</p>
+          ) : auctionHouseSales.length === 0 ? (
+            <p className="loading-message">Nenhuma venda registrada ainda.</p>
+          ) : (
+            <div className="sales-list">
+              {auctionHouseSales.map((sale) => (
+                <article className="sale-card" key={sale.id}>
+                  <div className="sale-card-head">
+                    <strong>
+                      {sale.lot?.code} · {sale.lot?.title}
+                    </strong>
+                    <span className="sale-price">{formatCurrency(sale.finalPrice)}</span>
+                  </div>
+                  {sale.lot?.auction?.title && (
+                    <span className="loading-message compact">
+                      Remate: {sale.lot.auction.title}
+                    </span>
+                  )}
+                  <dl className="winner-buyer-contact">
+                    <div>
+                      <dt>Comprador</dt>
+                      <dd>{sale.buyer?.name ?? 'Comprador'}</dd>
+                    </div>
+                    {sale.buyer?.email && (
+                      <div>
+                        <dt>E-mail</dt>
+                        <dd>{sale.buyer.email}</dd>
+                      </div>
+                    )}
+                    {sale.buyer?.phone && (
+                      <div>
+                        <dt>Telefone</dt>
+                        <dd>{sale.buyer.phone}</dd>
+                      </div>
+                    )}
+                    {sale.buyer?.document && (
+                      <div>
+                        <dt>Documento</dt>
+                        <dd>{sale.buyer.document}</dd>
+                      </div>
+                    )}
+                  </dl>
+                  <small className="sale-date">
+                    Arrematado em {new Date(sale.soldAt).toLocaleString('pt-BR')}
+                  </small>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      ) : view === 'myWins' ? (
+        <section className="sales-page">
+          <button className="text-action" type="button" onClick={() => setView('home')}>
+            Voltar aos remates
+          </button>
+
+          <div className="form-header">
+            <span className="eyebrow">Comprador</span>
+            <h1>Meus arremates</h1>
+            <p>Lotes que você arrematou. O escritório entra em contato para a logística.</p>
+          </div>
+
+          {isLoadingMyWins ? (
+            <p className="loading-message">Carregando arremates...</p>
+          ) : myWins.length === 0 ? (
+            <p className="loading-message">Você ainda não arrematou nenhum lote.</p>
+          ) : (
+            <div className="sales-list">
+              {myWins.map((sale) => (
+                <article className="sale-card" key={sale.id}>
+                  <div className="sale-card-head">
+                    <strong>
+                      {sale.lot?.code} · {sale.lot?.title}
+                    </strong>
+                    <span className="sale-price">{formatCurrency(sale.finalPrice)}</span>
+                  </div>
+                  {sale.lot?.auction?.title && (
+                    <span className="loading-message compact">
+                      Remate: {sale.lot.auction.title}
+                    </span>
+                  )}
+                  {sale.saleRecordedByAuctionHouse && (
+                    <dl className="winner-buyer-contact">
+                      <div>
+                        <dt>Escritório</dt>
+                        <dd>{sale.saleRecordedByAuctionHouse.name}</dd>
+                      </div>
+                      {sale.saleRecordedByAuctionHouse.email && (
+                        <div>
+                          <dt>Contato</dt>
+                          <dd>{sale.saleRecordedByAuctionHouse.email}</dd>
+                        </div>
+                      )}
+                    </dl>
+                  )}
+                  <small className="sale-date">
+                    Arrematado em {new Date(sale.soldAt).toLocaleString('pt-BR')}
+                  </small>
+                </article>
+              ))}
+            </div>
+          )}
         </section>
       ) : view === 'registerLot' ? (
         <section className="register-page">
@@ -2709,11 +2973,7 @@ function App() {
               disabled={isSubmitting || selectableAuctions.length === 0}
               type="submit"
             >
-              {isSubmitting
-                ? 'Enviando...'
-                : currentAuctionHouse
-                  ? 'Adicionar lote ao remate'
-                  : 'Enviar para aprovacao'}
+              {getLotSubmitLabel(isSubmitting, currentAuctionHouse)}
             </button>
           </form>
         </section>

@@ -63,3 +63,39 @@ export function createStreamSocket(): StreamSocket {
     transports: ['websocket', 'polling'],
   });
 }
+
+export type SaleWonPayload = {
+  saleId: string;
+  lotId: string;
+  lotCode: string;
+  lotTitle: string;
+  auctionId: string;
+  auctionTitle: string;
+  finalPrice: string;
+};
+
+type NotificationServerToClientEvents = {
+  'notifications:joined': (payload: { actorId: string }) => void;
+  'sale:won': (payload: SaleWonPayload) => void;
+  'stream:error': (payload: { message: string }) => void;
+};
+
+type NotificationClientToServerEvents = {
+  'notifications:join': () => void;
+};
+
+export type NotificationSocket = Socket<
+  NotificationServerToClientEvents,
+  NotificationClientToServerEvents
+>;
+
+export function createNotificationSocket(): NotificationSocket {
+  const token = localStorage.getItem(authStorage.tokenKey);
+
+  return io(apiUrl, {
+    auth: token ? { token } : undefined,
+    reconnectionAttempts: 6,
+    reconnectionDelay: 800,
+    transports: ['websocket', 'polling'],
+  });
+}

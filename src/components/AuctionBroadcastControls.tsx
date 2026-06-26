@@ -24,6 +24,48 @@ function stopMediaStream(stream: MediaStream | null) {
   stream?.getTracks().forEach((track) => track.stop());
 }
 
+function getActiveStatus(
+  isBroadcastLive: boolean,
+  streamStatus: string | undefined,
+  auctionStreamStatus: string | undefined,
+  auctionStatus: string,
+) {
+  if (isBroadcastLive) {
+    return formatStreamStatus('LIVE');
+  }
+  if (streamStatus) {
+    return formatStreamStatus(streamStatus);
+  }
+  return formatAuctionStatus(auctionStreamStatus ?? auctionStatus);
+}
+
+function getBroadcastCenterMessage(
+  streamStatus: string | undefined,
+  isStreamLive: boolean,
+  isStreamInterrupted: boolean,
+) {
+  if (streamStatus === 'ENDED') {
+    return 'A transmissão foi encerrada pelo escritório.';
+  }
+  if (isStreamLive) {
+    return 'A transmissão está ao vivo em outra sessão.';
+  }
+  if (isStreamInterrupted) {
+    return 'A transmissão foi interrompida. Retome quando estiver pronto.';
+  }
+  return 'Aguardando início da transmissão.';
+}
+
+function getStartButtonLabel(isStarting: boolean, isResuming: boolean) {
+  if (isStarting) {
+    return 'Iniciando...';
+  }
+  if (isResuming) {
+    return 'Retomar transmissão';
+  }
+  return 'Iniciar transmissão';
+}
+
 function closePeerConnection(peerConnection: RTCPeerConnection) {
   peerConnection.onicecandidate = null;
   peerConnection.onconnectionstatechange = null;
@@ -309,11 +351,12 @@ export function AuctionBroadcastControls({
   const canStopActiveStream =
     Boolean(streamState?.canBroadcast) && !localStream && isStreamLive;
   const isResuming = isStreamLive || isStreamInterrupted;
-  const activeStatus = isBroadcastLive
-    ? formatStreamStatus('LIVE')
-    : streamStatus
-      ? formatStreamStatus(streamStatus)
-      : formatAuctionStatus(streamState?.auction.status ?? auction.status);
+  const activeStatus = getActiveStatus(
+    isBroadcastLive,
+    streamStatus,
+    streamState?.auction.status,
+    auction.status,
+  );
 
   return (
     <>
@@ -329,13 +372,7 @@ export function AuctionBroadcastControls({
           <div className="player-center">
             <span className="play-button large">Reproduzir</span>
             <p>
-              {streamStatus === 'ENDED'
-                ? 'A transmissão foi encerrada pelo escritório.'
-                : isStreamLive
-                  ? 'A transmissão está ao vivo em outra sessão.'
-                  : isStreamInterrupted
-                    ? 'A transmissão foi interrompida. Retome quando estiver pronto.'
-                    : 'Aguardando início da transmissão.'}
+              {getBroadcastCenterMessage(streamStatus, isStreamLive, isStreamInterrupted)}
             </p>
           </div>
         )}
@@ -367,11 +404,7 @@ export function AuctionBroadcastControls({
             onClick={() => setIsPreviewOpen(true)}
             disabled={isStarting}
           >
-            {isStarting
-              ? 'Iniciando...'
-              : isResuming
-                ? 'Retomar transmissão'
-                : 'Iniciar transmissão'}
+            {getStartButtonLabel(isStarting, isResuming)}
           </button>
         )}
 

@@ -2006,3 +2006,164 @@ textarea:focus {
     flex-direction: column-reverse;
   }
 }
+
+/* Declarar vencedor (escritório) */
+.declare-winner-panel {
+  background: linear-gradient(135deg, #ffffff, #f1f8f4);
+  border: 1px solid rgba(18, 98, 70, 0.16);
+  border-radius: 14px;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+}
+
+.winner-current {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.winner-current strong {
+  color: var(--text-strong);
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+
+.winner-result {
+  display: grid;
+  gap: 12px;
+}
+
+.winner-result-title {
+  color: var(--text-strong);
+  font-weight: 800;
+  margin: 0;
+}
+
+.winner-buyer {
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+}
+
+.winner-buyer strong {
+  color: var(--text-strong);
+  font-size: 17px;
+}
+
+.winner-buyer-contact {
+  display: grid;
+  gap: 6px;
+  margin: 4px 0 0;
+}
+
+.winner-buyer-contact div {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.winner-buyer-contact dt {
+  color: var(--text-muted);
+  font-weight: 750;
+  margin: 0;
+}
+
+.winner-buyer-contact dd {
+  color: var(--text-strong);
+  font-weight: 800;
+  margin: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+/* Vendas / Meus arremates */
+.sales-page {
+  display: grid;
+  gap: 18px;
+  margin: 0 auto;
+  max-width: 880px;
+  padding: 24px 20px 48px;
+  width: 100%;
+}
+
+.sales-list {
+  display: grid;
+  gap: 14px;
+}
+
+.sale-card {
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
+  display: grid;
+  gap: 8px;
+  padding: 16px 18px;
+}
+
+.sale-card-head {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.sale-card-head strong {
+  color: var(--text-strong);
+  font-size: 17px;
+  overflow-wrap: anywhere;
+}
+
+.sale-price {
+  color: var(--brand-dark);
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.sale-date {
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+/* Notificação de arremate (comprador) */
+.win-toast {
+  align-items: center;
+  background: linear-gradient(135deg, #0f5132, #157347);
+  border-radius: 16px;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.25);
+  color: #ffffff;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: space-between;
+  margin: 16px auto 0;
+  max-width: 1120px;
+  padding: 16px 20px;
+  width: calc(100% - 40px);
+}
+
+.win-toast-body {
+  display: grid;
+  gap: 2px;
+}
+
+.win-toast-body strong {
+  font-size: 17px;
+}
+
+.win-toast-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.win-toast-actions .text-action {
+  color: #ffffff;
+}

@@ -16,6 +16,7 @@ export type Lot = {
     id: string;
     title: string;
   } | null;
+  consignmentId?: string | null;
   media?: LotMedia[];
   bids?: Bid[];
   createdAt: string;
