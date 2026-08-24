@@ -1,4 +1,4 @@
-import type { ChangeEvent, FormEvent, ReactNode } from 'react';
+import type { ChangeEvent, FormEvent } from 'react';
 import { ChevronLeft, Plus } from 'lucide-react';
 import type { Auction, AuctionStreamState } from '@/types/auction';
 import type { Bid, Lot } from '@/types/lot';
@@ -6,6 +6,7 @@ import type { BuyerRegistration } from '@/types/user';
 import { AuctionBroadcastControls } from '@/components/AuctionBroadcastControls';
 import { AuctionStreamPlayer } from '@/components/AuctionStreamPlayer';
 import { DeclareWinnerPanel } from '@/components/DeclareWinnerPanel';
+import type { LotImageItem } from '@/components/LotImageInput';
 import { Button } from '@/components/ui/button';
 import { Status } from '@/design/primitives/Status';
 import { BidPanel } from './auction-room/BidPanel';
@@ -51,7 +52,7 @@ type AuctionRoomPageProps = {
   detailImages: PendingImage[];
 
   lotForm: LotFormFields;
-  lotImageInput: ReactNode;
+  lotImages: LotImageItem[];
   buyerRegistrations: BuyerRegistration[];
   isLoadingBuyerRegistrations: boolean;
 
@@ -71,7 +72,9 @@ type AuctionRoomPageProps = {
   onRemoveDetailImage: (imageId: string) => void;
   onSaveDetailImages: () => void;
   onLotFieldChange: (field: keyof LotFormFields, value: string) => void;
+  onLotImagesChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onLotSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onRemoveLotImage: (imageId: string) => void;
   onReviewRegistration: (registrationId: string, status: 'APPROVED' | 'REJECTED') => void;
 };
 
@@ -95,7 +98,7 @@ export function AuctionRoomPage({
   selectedLotStageMessage,
   detailImages,
   lotForm,
-  lotImageInput,
+  lotImages,
   buyerRegistrations,
   isLoadingBuyerRegistrations,
   resolveMediaUrl,
@@ -114,7 +117,9 @@ export function AuctionRoomPage({
   onRemoveDetailImage,
   onSaveDetailImages,
   onLotFieldChange,
+  onLotImagesChange,
   onLotSubmit,
+  onRemoveLotImage,
   onReviewRegistration,
 }: AuctionRoomPageProps) {
   const isLive =
@@ -192,9 +197,11 @@ export function AuctionRoomPage({
               isLoadingBuyerRegistrations={isLoadingBuyerRegistrations}
               isSubmitting={isSubmitting}
               lotForm={lotForm}
-              lotImageInput={lotImageInput}
+              lotImages={lotImages}
               onLotFieldChange={onLotFieldChange}
+              onLotImagesChange={onLotImagesChange}
               onLotSubmit={onLotSubmit}
+              onRemoveLotImage={onRemoveLotImage}
               onReviewRegistration={onReviewRegistration}
             />
           )}

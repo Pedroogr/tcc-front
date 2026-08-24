@@ -1,6 +1,7 @@
-import type { FormEvent, ReactNode } from 'react';
+import type { ChangeEvent, FormEvent, ReactNode } from 'react';
 import type { BuyerRegistration } from '@/types/user';
 import { Button } from '@/components/ui/button';
+import { LotImageInput, type LotImageItem } from '@/components/LotImageInput';
 import { formatRegistrationStatus } from '@/utils/auctionLabels';
 
 /** Subconjunto do formulario de lote que este painel edita. */
@@ -16,8 +17,7 @@ type LotFormFields = {
 
 type RoomSidePanelProps = {
   lotForm: LotFormFields;
-  /** Elemento de upload, montado no App porque compartilha estado com outras telas. */
-  lotImageInput: ReactNode;
+  lotImages: LotImageItem[];
   isSubmitting: boolean;
   canSubmitLot: boolean;
   error: string;
@@ -25,12 +25,14 @@ type RoomSidePanelProps = {
   buyerRegistrations: BuyerRegistration[];
   isLoadingBuyerRegistrations: boolean;
   onLotFieldChange: (field: keyof LotFormFields, value: string) => void;
+  onLotImagesChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onLotSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onRemoveLotImage: (imageId: string) => void;
   onReviewRegistration: (registrationId: string, status: 'APPROVED' | 'REJECTED') => void;
 };
 
 const fieldClass =
-  'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none placeholder:text-placeholder focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40';
+  'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm font-normal outline-none placeholder:text-placeholder focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40';
 
 function Field({
   label,
@@ -49,7 +51,7 @@ function Field({
 
 export function RoomSidePanel({
   lotForm,
-  lotImageInput,
+  lotImages,
   isSubmitting,
   canSubmitLot,
   error,
@@ -57,7 +59,9 @@ export function RoomSidePanel({
   buyerRegistrations,
   isLoadingBuyerRegistrations,
   onLotFieldChange,
+  onLotImagesChange,
   onLotSubmit,
+  onRemoveLotImage,
   onReviewRegistration,
 }: RoomSidePanelProps) {
   const pendingCount = buyerRegistrations.filter((r) => r.status === 'PENDING').length;
@@ -140,7 +144,11 @@ export function RoomSidePanel({
             />
           </Field>
 
-          {lotImageInput}
+          <LotImageInput
+            images={lotImages}
+            onChange={onLotImagesChange}
+            onRemove={onRemoveLotImage}
+          />
 
           {error && (
             <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-[12.5px] text-destructive">

@@ -27,9 +27,13 @@ import { AuctionRoomPage } from './pages/AuctionRoomPage';
 import { AuthPage } from './pages/AuthPage';
 import { HomePage } from './pages/HomePage';
 import { AccountDetailsPage } from './pages/AccountDetailsPage';
+import { CreateAuctionPage } from './pages/CreateAuctionPage';
+import { MyWinsPage } from './pages/MyWinsPage';
 import { OfficeInvitePage } from './pages/OfficeInvitePage';
+import { RegisterLotPage } from './pages/RegisterLotPage';
+import { SalesPage } from './pages/SalesPage';
+import { SellerProfilePage } from './pages/SellerProfilePage';
 import { Button } from './components/ui/button';
-import { Input } from './components/ui/input';
 import type { Auction, AuctionStreamState } from './types/auction';
 import type { CreateAuctionPayload } from './types/auction';
 import type { CreateLotPayload, Lot, LotImagePayload } from './types/lot';
@@ -275,16 +279,6 @@ function getLotStageMessage(status: string, consignmentId?: string | null) {
   return 'Lote pronto para ser liberado.';
 }
 
-function getLotSubmitLabel(isSubmitting: boolean, currentAuctionHouse: AuctionHouse | null) {
-  if (isSubmitting) {
-    return 'Enviando...';
-  }
-  if (currentAuctionHouse) {
-    return 'Adicionar lote ao remate';
-  }
-  return 'Enviar para aprovacao';
-}
-
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() =>
     Boolean(localStorage.getItem(authStorage.tokenKey)),
@@ -341,8 +335,10 @@ function App() {
   );
   const [auctionHouseSales, setAuctionHouseSales] = useState<Sale[]>([]);
   const [isLoadingSales, setIsLoadingSales] = useState(false);
+  const [salesError, setSalesError] = useState('');
   const [myWins, setMyWins] = useState<Sale[]>([]);
   const [isLoadingMyWins, setIsLoadingMyWins] = useState(false);
+  const [myWinsError, setMyWinsError] = useState('');
   const [winToast, setWinToast] = useState<SaleWonNotification | null>(null);
 
   const isAuctionOwnedByCurrentOffice = useCallback(
@@ -529,11 +525,13 @@ function App() {
 
   const loadAuctionHouseSales = useCallback(async () => {
     setIsLoadingSales(true);
+    setSalesError('');
 
     try {
       setAuctionHouseSales(await listAuctionHouseSales());
     } catch {
       setAuctionHouseSales([]);
+      setSalesError('Não foi possível carregar as vendas agora.');
     } finally {
       setIsLoadingSales(false);
     }
@@ -541,11 +539,13 @@ function App() {
 
   const loadMyWins = useCallback(async () => {
     setIsLoadingMyWins(true);
+    setMyWinsError('');
 
     try {
       setMyWins(await listMyWins());
     } catch {
       setMyWins([]);
+      setMyWinsError('Não foi possível carregar seus arremates agora.');
     } finally {
       setIsLoadingMyWins(false);
     }
@@ -912,31 +912,6 @@ function App() {
     } catch {
       setError('Nao foi possivel atualizar a solicitacao do comprador.');
     }
-  }
-
-  function renderLotImageInput() {
-    return (
-      <div className="image-upload-field">
-        <label>
-          Imagens do lote
-          <input accept="image/*" multiple type="file" onChange={handleLotImageChange} />
-        </label>
-
-        {lotImages.length > 0 && (
-          <div className="image-upload-list">
-            {lotImages.map((image) => (
-              <div className="image-upload-item" key={image.id}>
-                <img alt="" src={image.dataUrl} />
-                <span>{image.fileName}</span>
-                <button type="button" onClick={() => removeLotImage(image.id)}>
-                  Remover
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    );
   }
 
   function updateAuctionField(field: keyof AuctionFormState, value: string) {
@@ -1346,6 +1321,10 @@ function App() {
     setCurrentAuctionHouse(null);
     setSelectedAuctionId(null);
     setSelectedStreamState(null);
+    setAuctionHouseSales([]);
+    setSalesError('');
+    setMyWins([]);
+    setMyWinsError('');
     clearAuctionThumbnail();
     setView('home');
   }
@@ -1532,7 +1511,7 @@ function App() {
           isLoadingLots={isLoadingLots}
           isSubmitting={isSubmitting}
           lotForm={lotForm}
-          lotImageInput={renderLotImageInput()}
+          lotImages={lotImages}
           lots={selectedAuctionLots}
           myRegistration={myRegistration}
           resolveMediaUrl={resolveMediaUrl}
@@ -1553,7 +1532,9 @@ function App() {
           onCreateAuction={() => setView('createAuction')}
           onDetailImagesChange={handleDetailLotImageChange}
           onLotFieldChange={updateLotField}
+          onLotImagesChange={handleLotImageChange}
           onLotSubmit={handleLotSubmit}
+          onRemoveLotImage={removeLotImage}
           onRemoveDetailImage={removeDetailLotImage}
           onRequestApproval={handleRequestApproval}
           onReviewRegistration={handleReviewRegistration}
@@ -1580,484 +1561,54 @@ function App() {
           resolveMediaUrl={resolveMediaUrl}
         />
       ) : view === 'createAuction' ? (
-        <section className="register-page">
-          <div className="register-copy">
-            <span className="eyebrow">Remate do escritorio</span>
-            <h1>Crie ou agende um remate e adicione os lotes.</h1>
-            <p>
-              O remate fica vinculado ao escritorio logado. Depois de salvar, a
-              tela abre direto no cadastro de lotes desse remate.
-            </p>
-          </div>
-
-          <form className="lot-form" onSubmit={handleAuctionSubmit}>
-            <div className="form-header">
-              <h2>Novo remate</h2>
-            </div>
-
-            <label>
-              Titulo
-              <Input
-                required
-                value={auctionForm.title}
-                onChange={(event) => updateAuctionField('title', event.target.value)}
-                placeholder="Remate Primavera 2026"
-                className="mt-2 h-12 rounded-xl border-primary/15 bg-white/75 font-semibold"
-              />
-            </label>
-
-            <label>
-              Data e hora
-              <Input
-                type="datetime-local"
-                value={auctionForm.scheduledAt}
-                onChange={(event) => updateAuctionField('scheduledAt', event.target.value)}
-                className="mt-2 h-12 rounded-xl border-primary/15 bg-white/75 font-semibold"
-              />
-            </label>
-
-            <label>
-              Descricao
-              <textarea
-                value={auctionForm.description}
-                onChange={(event) => updateAuctionField('description', event.target.value)}
-                placeholder="Conjunto de lotes, condicoes comerciais e detalhes do evento."
-              />
-            </label>
-
-            <div className="auction-cover-field">
-              <div>
-                <span>Imagem de capa do remate</span>
-                <small>JPG, PNG ou WEBP. Tamanho máximo de 5 MB.</small>
-              </div>
-
-              {auctionThumbnail ? (
-                <div className="auction-cover-preview">
-                  <img alt="" src={auctionThumbnail.previewUrl} />
-                  <div>
-                    <strong>{auctionThumbnail.file.name}</strong>
-                    <span>{(auctionThumbnail.file.size / 1024 / 1024).toFixed(2)} MB</span>
-                    <div className="auction-cover-actions">
-                      <label className="secondary-action">
-                        Substituir imagem
-                        <input
-                          accept="image/jpeg,image/png,image/webp"
-                          type="file"
-                          onChange={handleAuctionThumbnailChange}
-                        />
-                      </label>
-                      <button className="inline-helper-action" type="button" onClick={clearAuctionThumbnail}>
-                        Remover imagem
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <label className="auction-cover-dropzone">
-                  <span>Selecionar imagem do dispositivo</span>
-                  <small>A capa será exibida nos cards de remates disponíveis.</small>
-                  <input
-                    accept="image/jpeg,image/png,image/webp"
-                    type="file"
-                    onChange={handleAuctionThumbnailChange}
-                  />
-                </label>
-              )}
-            </div>
-
-            {error && <p className="form-error">{error}</p>}
-
-            <button className="primary-action" disabled={isSubmitting} type="submit">
-              {isSubmitting ? 'Salvando...' : 'Criar remate e adicionar lotes'}
-            </button>
-          </form>
-        </section>
+        <CreateAuctionPage
+          auctionForm={auctionForm}
+          auctionThumbnail={auctionThumbnail}
+          error={error}
+          isSubmitting={isSubmitting}
+          onClearThumbnail={clearAuctionThumbnail}
+          onFieldChange={updateAuctionField}
+          onSubmit={handleAuctionSubmit}
+          onThumbnailChange={handleAuctionThumbnailChange}
+        />
       ) : view === 'sellerProfile' ? (
-        <section className="register-page">
-          <div className="register-copy">
-            <span className="eyebrow">Cadastro de produtor</span>
-            <h1>Complete seus dados para solicitar lotes em remates.</h1>
-            <p>
-              O cadastro inicial continua sendo uma conta comum. Estes dados rurais
-              habilitam o envio de lotes para analise do escritorio responsavel.
-            </p>
-          </div>
-
-          <form className="lot-form" onSubmit={handleSellerProfileSubmit}>
-            <div className="form-header">
-              <h2>Dados do produtor</h2>
-            </div>
-
-            <label>
-              Nome da fazenda
-              <input
-                value={sellerProfileForm.farmName}
-                onChange={(event) => updateSellerProfileField('farmName', event.target.value)}
-                placeholder="Fazenda Santa Maria"
-              />
-            </label>
-
-            <div className="form-grid">
-              <label>
-                Inscrição rural
-                <input
-                  value={sellerProfileForm.ruralRegistration}
-                  onChange={(event) =>
-                    updateSellerProfileField('ruralRegistration', event.target.value)
-                  }
-                  placeholder="Registro do produtor"
-                />
-              </label>
-
-              <label>
-                Inscrição estadual
-                <input
-                  value={sellerProfileForm.stateRegistration}
-                  onChange={(event) =>
-                    updateSellerProfileField('stateRegistration', event.target.value)
-                  }
-                  placeholder="IE"
-                />
-              </label>
-            </div>
-
-            <div className="form-grid three">
-              <label>
-                Cidade
-                <input
-                  value={sellerProfileForm.city}
-                  onChange={(event) => updateSellerProfileField('city', event.target.value)}
-                  placeholder="Campo Grande"
-                />
-              </label>
-
-              <label>
-                Estado
-                <input
-                  maxLength={2}
-                  value={sellerProfileForm.state}
-                  onChange={(event) =>
-                    updateSellerProfileField('state', event.target.value.toUpperCase())
-                  }
-                  placeholder="MS"
-                />
-              </label>
-
-              <label>
-                Pais
-                <input
-                  value={sellerProfileForm.country}
-                  onChange={(event) => updateSellerProfileField('country', event.target.value)}
-                  placeholder="BR"
-                />
-              </label>
-            </div>
-
-            {error && <p className="form-error">{error}</p>}
-
-            <button className="primary-action" disabled={isSubmitting} type="submit">
-              {isSubmitting ? 'Salvando...' : 'Salvar e solicitar lote'}
-            </button>
-          </form>
-        </section>
+        <SellerProfilePage
+          error={error}
+          form={sellerProfileForm}
+          isSubmitting={isSubmitting}
+          onFieldChange={updateSellerProfileField}
+          onSubmit={handleSellerProfileSubmit}
+        />
       ) : view === 'sales' ? (
-        <section className="sales-page">
-          <button className="text-action" type="button" onClick={() => setView('home')}>
-            Voltar aos remates
-          </button>
-
-          <div className="form-header">
-            <span className="eyebrow">Escritório</span>
-            <h1>Vendas / Arremates</h1>
-            <p>
-              Compradores vencedores de cada lote, com os contatos para combinar
-              o transporte e a logística.
-            </p>
-          </div>
-
-          {isLoadingSales ? (
-            <p className="loading-message">Carregando vendas...</p>
-          ) : auctionHouseSales.length === 0 ? (
-            <p className="loading-message">Nenhuma venda registrada ainda.</p>
-          ) : (
-            <div className="sales-list">
-              {auctionHouseSales.map((sale) => (
-                <article className="sale-card" key={sale.id}>
-                  <div className="sale-card-head">
-                    <strong>
-                      {sale.lot?.code} · {sale.lot?.title}
-                    </strong>
-                    <span className="sale-price">{formatCurrency(sale.finalPrice)}</span>
-                  </div>
-                  {sale.lot?.auction?.title && (
-                    <span className="loading-message compact">
-                      Remate: {sale.lot.auction.title}
-                    </span>
-                  )}
-                  <dl className="winner-buyer-contact">
-                    <div>
-                      <dt>Comprador</dt>
-                      <dd>{sale.buyer?.name ?? 'Comprador'}</dd>
-                    </div>
-                    {sale.buyer?.email && (
-                      <div>
-                        <dt>E-mail</dt>
-                        <dd>{sale.buyer.email}</dd>
-                      </div>
-                    )}
-                    {sale.buyer?.phone && (
-                      <div>
-                        <dt>Telefone</dt>
-                        <dd>{sale.buyer.phone}</dd>
-                      </div>
-                    )}
-                    {sale.buyer?.document && (
-                      <div>
-                        <dt>Documento</dt>
-                        <dd>{sale.buyer.document}</dd>
-                      </div>
-                    )}
-                  </dl>
-                  <small className="sale-date">
-                    Arrematado em {new Date(sale.soldAt).toLocaleString('pt-BR')}
-                  </small>
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
+        <SalesPage
+          error={salesError}
+          isLoading={isLoadingSales}
+          sales={auctionHouseSales}
+          onBack={() => setView('home')}
+          onRetry={() => void loadAuctionHouseSales()}
+        />
       ) : view === 'myWins' ? (
-        <section className="sales-page">
-          <button className="text-action" type="button" onClick={() => setView('home')}>
-            Voltar aos remates
-          </button>
-
-          <div className="form-header">
-            <span className="eyebrow">Comprador</span>
-            <h1>Meus arremates</h1>
-            <p>Lotes que você arrematou. O escritório entra em contato para a logística.</p>
-          </div>
-
-          {isLoadingMyWins ? (
-            <p className="loading-message">Carregando arremates...</p>
-          ) : myWins.length === 0 ? (
-            <p className="loading-message">Você ainda não arrematou nenhum lote.</p>
-          ) : (
-            <div className="sales-list">
-              {myWins.map((sale) => (
-                <article className="sale-card" key={sale.id}>
-                  <div className="sale-card-head">
-                    <strong>
-                      {sale.lot?.code} · {sale.lot?.title}
-                    </strong>
-                    <span className="sale-price">{formatCurrency(sale.finalPrice)}</span>
-                  </div>
-                  {sale.lot?.auction?.title && (
-                    <span className="loading-message compact">
-                      Remate: {sale.lot.auction.title}
-                    </span>
-                  )}
-                  {sale.saleRecordedByAuctionHouse && (
-                    <dl className="winner-buyer-contact">
-                      <div>
-                        <dt>Escritório</dt>
-                        <dd>{sale.saleRecordedByAuctionHouse.name}</dd>
-                      </div>
-                      {sale.saleRecordedByAuctionHouse.email && (
-                        <div>
-                          <dt>Contato</dt>
-                          <dd>{sale.saleRecordedByAuctionHouse.email}</dd>
-                        </div>
-                      )}
-                    </dl>
-                  )}
-                  <small className="sale-date">
-                    Arrematado em {new Date(sale.soldAt).toLocaleString('pt-BR')}
-                  </small>
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
+        <MyWinsPage
+          error={myWinsError}
+          isLoading={isLoadingMyWins}
+          sales={myWins}
+          onBack={() => setView('home')}
+          onRetry={() => void loadMyWins()}
+        />
       ) : view === 'registerLot' ? (
-        <section className="register-page">
-          <div className="register-copy">
-            <span className="eyebrow">
-              {currentAuctionHouse ? 'Lote do remate' : 'Solicitacao de lote'}
-            </span>
-            <h1>
-              {currentAuctionHouse
-                ? 'Adicione lotes aos remates do escritorio.'
-                : 'Associe o lote a um remate antes de enviar.'}
-            </h1>
-            <p>
-              {currentAuctionHouse
-                ? 'Escolha um remate criado pelo escritorio e cadastre os lotes que farao parte da oferta.'
-                : 'O lote nao entra direto na vitrine. Ele fica em analise e precisa ser aprovado pelo escritorio responsavel pelo remate.'}
-            </p>
-
-            <div className="market-panel">
-              <div className="market-image" aria-hidden="true">
-                <span className="live-dot"></span>
-                <strong>Em analise</strong>
-              </div>
-              <div>
-                <strong>Regra de publicacao</strong>
-                <span>Lote sempre vinculado a um remate e enviado para aprovacao.</span>
-              </div>
-            </div>
-          </div>
-
-          <form className="lot-form" onSubmit={handleLotSubmit}>
-            <div className="form-header">
-              <h2>{currentAuctionHouse ? 'Adicionar lote' : 'Novo lote'}</h2>
-            </div>
-
-            {selectableAuctions.length === 0 ? (
-              <p className="form-error">
-                {currentAuctionHouse
-                  ? 'Crie um remate antes de adicionar lotes.'
-                  : 'Nenhum remate disponivel para associar. Selecione um remate antes de solicitar um lote.'}
-              </p>
-            ) : (
-              <label>
-                Remate
-                <select
-                  required
-                  value={selectedLotAuctionId}
-                  onChange={(event) => updateLotField('auctionId', event.target.value)}
-                >
-                  {selectableAuctions.map((auction) => (
-                    <option key={auction.id} value={auction.id}>
-                      {auction.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-
-            <label>
-              Codigo do lote
-              <input
-                required
-                value={lotForm.code}
-                onChange={(event) => updateLotField('code', event.target.value)}
-                placeholder="LOTE-001"
-              />
-            </label>
-
-            <label>
-              Titulo
-              <input
-                required
-                value={lotForm.title}
-                onChange={(event) => updateLotField('title', event.target.value)}
-                placeholder="Nelore PO - lote jovem"
-              />
-            </label>
-
-            <div className="form-grid">
-              <label>
-                Raca
-                <input
-                  value={lotForm.breed}
-                  onChange={(event) => updateLotField('breed', event.target.value)}
-                  placeholder="Nelore"
-                />
-              </label>
-
-              <label>
-                Categoria
-                <input
-                  value={lotForm.category}
-                  onChange={(event) => updateLotField('category', event.target.value)}
-                  placeholder="Corte"
-                />
-              </label>
-            </div>
-
-            <div className="form-grid three">
-              <label>
-                Quantidade
-                <input
-                  min="1"
-                  type="number"
-                  value={lotForm.quantity}
-                  onChange={(event) => updateLotField('quantity', event.target.value)}
-                />
-              </label>
-
-              <label>
-                Peso kg
-                <input
-                  min="0"
-                  type="number"
-                  value={lotForm.weightKg}
-                  onChange={(event) => updateLotField('weightKg', event.target.value)}
-                  placeholder="420"
-                />
-              </label>
-
-              <label>
-                Idade meses
-                <input
-                  min="0"
-                  type="number"
-                  value={lotForm.ageMonths}
-                  onChange={(event) => updateLotField('ageMonths', event.target.value)}
-                  placeholder="24"
-                />
-              </label>
-            </div>
-
-            <div className="form-grid">
-              <label>
-                Sexo
-                <select
-                  value={lotForm.sex}
-                  onChange={(event) => updateLotField('sex', event.target.value)}
-                >
-                  <option value="">Nao informado</option>
-                  <option value="Macho">Macho</option>
-                  <option value="Femea">Femea</option>
-                  <option value="Misto">Misto</option>
-                </select>
-              </label>
-
-              <label>
-                Valor inicial
-                <input
-                  min="0"
-                  type="number"
-                  value={lotForm.initialPrice}
-                  onChange={(event) => updateLotField('initialPrice', event.target.value)}
-                  placeholder="15000"
-                />
-              </label>
-            </div>
-
-            <label>
-              Descricao
-              <textarea
-                value={lotForm.description}
-                onChange={(event) => updateLotField('description', event.target.value)}
-                placeholder="Lote com animais jovens, bom padrao racial e documentacao em dia."
-              />
-            </label>
-
-            {renderLotImageInput()}
-
-            {error && <p className="form-error">{error}</p>}
-
-            <button
-              className="primary-action"
-              disabled={isSubmitting || selectableAuctions.length === 0}
-              type="submit"
-            >
-              {getLotSubmitLabel(isSubmitting, currentAuctionHouse)}
-            </button>
-          </form>
-        </section>
+        <RegisterLotPage
+          auctions={selectableAuctions}
+          error={error}
+          isAuctionHouse={Boolean(currentAuctionHouse)}
+          isSubmitting={isSubmitting}
+          lotForm={lotForm}
+          lotImages={lotImages}
+          selectedAuctionId={selectedLotAuctionId}
+          onFieldChange={updateLotField}
+          onImagesChange={handleLotImageChange}
+          onRemoveImage={removeLotImage}
+          onSubmit={handleLotSubmit}
+        />
       ) : (
         <HomePage
           auctions={visibleAuctions}
