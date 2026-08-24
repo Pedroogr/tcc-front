@@ -1,4 +1,4 @@
-import { motion } from 'motion/react';
+import { motion, useReducedMotion } from 'motion/react';
 import {
   ArrowRight,
   Building2,
@@ -11,7 +11,6 @@ import {
 import { apiUrl } from '@/api/http';
 import type { Auction } from '@/types/auction';
 import { formatAuctionStatus } from '@/utils/auctionLabels';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -70,13 +69,13 @@ function getAuctionDateLabel(auction: Auction) {
 
 function getStatusBadgeClass(statusKey: string) {
   const statusClasses: Record<string, string> = {
-    LIVE: 'border-live/20 bg-live text-white shadow-[0_10px_24px_rgba(201,42,31,0.26)]',
-    SCHEDULED: 'border-scheduled/20 bg-scheduled text-white',
-    FINISHED: 'border-slate-500/20 bg-slate-700 text-white',
-    CANCELED: 'border-destructive/20 bg-destructive text-white',
-    STREAM_ENDED: 'border-slate-500/20 bg-slate-700 text-white',
-    STREAM_INTERRUPTED: 'border-amber-500/25 bg-amber-500 text-white',
-    DRAFT: 'border-white/25 bg-white/20 text-white',
+    LIVE: 'border-live bg-live text-primary-foreground',
+    SCHEDULED: 'border-[#46381a] bg-[#241c0c] text-scheduled',
+    FINISHED: 'border-input bg-muted text-muted-foreground',
+    CANCELED: 'border-destructive/40 bg-card text-destructive',
+    STREAM_ENDED: 'border-input bg-muted text-muted-foreground',
+    STREAM_INTERRUPTED: 'border-[#5c2621] bg-[#2a1210] text-[#f0776c]',
+    DRAFT: 'border-input bg-popover text-muted-foreground',
   };
 
   return statusClasses[statusKey] ?? statusClasses.DRAFT;
@@ -91,27 +90,27 @@ export function AuctionCard({
   index = 0,
 }: AuctionCardProps) {
   const [imageFailed, setImageFailed] = useState(false);
+  const shouldReduceMotion = useReducedMotion();
   const statusKey = getAuctionStatusKey(auction);
   const thumbnailUrl =
     auction.thumbnailUrl && !imageFailed ? resolveMediaUrl(auction.thumbnailUrl) : '';
 
   return (
     <motion.article
-      initial={{ opacity: 0, y: 18 }}
+      initial={shouldReduceMotion ? false : { opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.32, delay: Math.min(index * 0.05, 0.3), ease: 'easeOut' }}
-      whileHover={{ y: -4 }}
+      transition={{ duration: 0.24, delay: Math.min(index * 0.04, 0.24), ease: 'easeOut' }}
       className="h-full"
     >
       <Card
         className={cn(
-          'group h-full overflow-hidden rounded-[20px] border-primary/10 bg-white py-0 shadow-[0_10px_30px_rgba(15,23,42,0.08)] transition-shadow duration-300 hover:shadow-[0_16px_40px_rgba(15,23,42,0.13)]',
-          isHighlighted && 'border-primary/40 ring-2 ring-primary/10',
+          'group h-full overflow-hidden rounded-xl border-border bg-card py-0 shadow-none transition-colors duration-200 hover:border-brand-line',
+          isHighlighted && 'border-primary ring-2 ring-primary/20',
         )}
       >
         <button
           aria-label={`Entrar no remate ${auction.title}`}
-          className="relative block aspect-video w-full overflow-hidden bg-primary text-left"
+          className="relative block aspect-[16/9] w-full overflow-hidden bg-brand-tint text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           type="button"
           onClick={() => onEnter(auction.id)}
         >
@@ -122,50 +121,51 @@ export function AuctionCard({
               loading="lazy"
               decoding="async"
               onError={() => setImageFailed(true)}
-              className="absolute inset-0 size-full object-cover transition-transform duration-500 group-hover:scale-105"
+              className="absolute inset-0 size-full object-cover transition-transform duration-300 motion-safe:group-hover:scale-[1.025]"
             />
           ) : (
-            <div className="absolute inset-0 grid place-items-center bg-[linear-gradient(135deg,#14382d,#1e6f50_58%,#8b7444)]">
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_20%,rgba(255,255,255,0.18),transparent_30%),linear-gradient(90deg,rgba(255,255,255,0.12)_1px,transparent_1px),linear-gradient(0deg,rgba(255,255,255,0.10)_1px,transparent_1px)] bg-[length:auto,34px_34px,34px_34px]" />
-              <div className="relative grid justify-items-center gap-2 text-center text-white">
-                <span className="grid size-14 place-items-center rounded-2xl border border-white/25 bg-white/20 shadow-inner">
-                  <ImageIcon className="size-6" />
+            <div className="absolute inset-0 grid place-items-center bg-[linear-gradient(135deg,var(--brand-tint),var(--brand-line))]">
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_20%,color-mix(in_srgb,var(--primary)_24%,transparent),transparent_32%)]" />
+              <div className="relative grid justify-items-center gap-2 px-4 text-center text-foreground">
+                <span className="grid size-12 place-items-center rounded-lg border border-brand-line bg-card/70">
+                  <ImageIcon className="size-5 text-primary" />
                 </span>
-                <strong className="text-lg font-black">Remate online</strong>
-                <small className="font-bold text-white/75">
+                <strong className="text-base font-semibold">Remate online</strong>
+                <small className="text-muted-foreground">
                   Transmissão e lotes em destaque
                 </small>
               </div>
             </div>
           )}
 
-          <div className="absolute inset-0 bg-gradient-to-b from-[#07130f]/75 via-[#07130f]/10 to-[#07130f]/70" />
+          {thumbnailUrl && (
+            <div className="absolute inset-0 bg-gradient-to-b from-[#07130f]/75 via-transparent to-[#07130f]/70" />
+          )}
 
           <div className="absolute left-4 right-4 top-4 flex flex-wrap items-center gap-2">
-            <Badge
-              asChild
-              className={cn('h-8 border px-3 text-[11px] font-black tracking-wide', getStatusBadgeClass(statusKey))}
+            <motion.span
+              key={statusKey}
+              initial={shouldReduceMotion ? false : { opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.16 }}
+              className={cn(
+                'inline-flex h-7 items-center gap-1.5 rounded-[6px] border px-2.5 text-[11px] font-semibold tracking-[0.06em]',
+                getStatusBadgeClass(statusKey),
+              )}
             >
-              <motion.span
-                key={statusKey}
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.18 }}
-              >
-                {statusKey === 'LIVE' && <Radio className="size-3.5" />}
-                {formatAuctionStatus(statusKey)}
-              </motion.span>
-            </Badge>
+              {statusKey === 'LIVE' && <Radio className="size-3.5" />}
+              {formatAuctionStatus(statusKey)}
+            </motion.span>
             {isOwnAuction && (
-              <Badge className="h-8 border border-white/30 bg-white/90 px-3 text-[11px] font-black tracking-wide text-primary">
+              <span className="inline-flex h-7 items-center rounded-[6px] border border-brand-line bg-brand-tint px-2.5 text-[11px] font-semibold tracking-[0.06em] text-primary">
                 MEU REMATE
-              </Badge>
+              </span>
             )}
           </div>
 
           <Tooltip>
             <TooltipTrigger asChild>
-              <span className="absolute bottom-4 right-4 grid size-11 place-items-center rounded-full border border-white/35 bg-white/25 text-white shadow-lg transition-transform duration-300 group-hover:scale-105">
+              <span className="absolute bottom-4 right-4 grid size-10 place-items-center rounded-full border border-white/30 bg-[#07130f]/65 text-white backdrop-blur-sm transition-colors hover:bg-[#07130f]/85">
                 <Play className="ml-0.5 size-4 fill-current" />
               </span>
             </TooltipTrigger>
@@ -173,12 +173,12 @@ export function AuctionCard({
           </Tooltip>
         </button>
 
-        <CardContent className="grid gap-5 p-6">
+        <CardContent className="grid gap-5 p-5 sm:p-6">
           <div className="grid gap-2">
-            <span className="text-xs font-black uppercase tracking-[0.12em] text-primary">
+            <span className="t-label text-primary">
               {auction.auctionHouse?.name || 'Escritório'}
             </span>
-            <h2 className="line-clamp-2 text-2xl font-black leading-tight text-foreground">
+            <h2 className="line-clamp-2 font-[family-name:var(--font-display)] text-2xl font-bold leading-tight tracking-[-0.015em] text-foreground">
               {auction.title}
             </h2>
             <p className="line-clamp-2 min-h-12 text-sm leading-6 text-muted-foreground">
@@ -186,34 +186,34 @@ export function AuctionCard({
             </p>
           </div>
 
-          <dl className="grid gap-3 border-y border-border/80 py-4 sm:grid-cols-3">
+          <dl className="grid grid-cols-3 gap-3 border-y border-border py-4">
             <div className="grid gap-1">
-              <dt className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wide text-muted-foreground">
+              <dt className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-subtle">
                 <GalleryVerticalEnd className="size-3.5 text-primary" />
                 Lotes
               </dt>
-              <dd className="font-black text-foreground">{lotCount}</dd>
+              <dd className="font-semibold tabular-nums text-foreground">{lotCount}</dd>
             </div>
             <div className="grid gap-1">
-              <dt className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wide text-muted-foreground">
+              <dt className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-subtle">
                 <Building2 className="size-3.5 text-primary" />
                 Escritório
               </dt>
-              <dd className="truncate font-black text-foreground">
+              <dd className="truncate text-sm font-semibold text-foreground">
                 {auction.auctionHouse?.name || '-'}
               </dd>
             </div>
             <div className="grid gap-1">
-              <dt className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wide text-muted-foreground">
+              <dt className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-subtle">
                 <CalendarDays className="size-3.5 text-primary" />
                 Data
               </dt>
-              <dd className="font-black text-foreground">{getAuctionDateLabel(auction)}</dd>
+              <dd className="t-mono truncate text-foreground">{getAuctionDateLabel(auction)}</dd>
             </div>
           </dl>
 
           <Button
-            className="h-12 rounded-full bg-primary text-base font-black text-primary-foreground shadow-[0_14px_34px_rgba(18,98,70,0.24)] hover:bg-primary/92"
+            className="h-11 rounded-md font-semibold"
             type="button"
             onClick={() => onEnter(auction.id)}
           >
@@ -228,7 +228,7 @@ export function AuctionCard({
 
 export function AuctionCardSkeleton() {
   return (
-    <Card className="overflow-hidden rounded-[20px] border-primary/10 bg-white py-0 shadow-[0_10px_30px_rgba(15,23,42,0.07)]">
+    <Card className="overflow-hidden rounded-xl border-border bg-card py-0 shadow-none">
       <Skeleton className="aspect-video rounded-none" />
       <CardContent className="grid gap-5 p-6">
         <div className="grid gap-3">
@@ -242,7 +242,7 @@ export function AuctionCardSkeleton() {
           <Skeleton className="h-10" />
           <Skeleton className="h-10" />
         </div>
-        <Skeleton className="h-12 rounded-full" />
+        <Skeleton className="h-11 rounded-md" />
       </CardContent>
     </Card>
   );

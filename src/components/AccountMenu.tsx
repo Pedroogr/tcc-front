@@ -49,7 +49,7 @@ export function AccountMenuItem({
   return (
     <DropdownMenuItem
       variant={danger ? 'destructive' : 'default'}
-      className="h-11 cursor-pointer rounded-xl px-3 text-[15px] font-extrabold"
+      className="h-10 cursor-pointer rounded-md px-3 text-sm font-medium"
       onSelect={onSelect}
     >
       <Icon className="size-4" />
@@ -86,18 +86,18 @@ export function AccountMenu({
       <DropdownMenuTrigger asChild>
         <Button
           variant="outline"
-          className="h-12 gap-3 rounded-full border-primary/15 bg-white px-2.5 pr-4 text-foreground shadow-[0_8px_22px_rgba(15,23,42,0.07)] hover:bg-white"
+          className="h-10 gap-2 rounded-md border-border bg-card px-1.5 pr-2 text-foreground shadow-none hover:bg-accent sm:pr-3"
         >
-          <Avatar className="size-9 border border-white/70 shadow-sm">
-            <AvatarFallback className="bg-primary text-xs font-black text-primary-foreground">
+          <Avatar className="size-7 border border-brand-line">
+            <AvatarFallback className="bg-brand-tint text-[10px] font-semibold text-primary">
               {initials}
             </AvatarFallback>
           </Avatar>
           <span className="hidden min-w-0 text-left leading-tight sm:grid">
-            <strong className="max-w-44 truncate text-sm font-black">
+            <strong className="max-w-44 truncate text-sm font-semibold">
               {accountName}
             </strong>
-            <small className="text-xs font-bold text-muted-foreground">
+            <small className="text-xs text-muted-foreground">
               {accountSubtitle}
             </small>
           </span>
@@ -108,7 +108,7 @@ export function AccountMenu({
       <DropdownMenuContent
         align="end"
         sideOffset={12}
-        className="w-72 rounded-2xl border-primary/10 bg-popover/95 p-2 shadow-[0_28px_80px_rgba(15,23,42,0.18)] backdrop-blur-xl"
+        className="w-72 rounded-lg border-border bg-popover p-2 shadow-[0_18px_50px_rgb(0_0_0/0.32)]"
       >
         <motion.div
           initial={{ opacity: 0, y: -4, scale: 0.98 }}
@@ -116,16 +116,16 @@ export function AccountMenu({
           transition={{ duration: 0.14, ease: 'easeOut' }}
         >
           <DropdownMenuLabel className="flex items-center gap-3 px-3 py-3">
-            <Avatar className="size-11 border border-primary/10">
-              <AvatarFallback className="bg-primary text-sm font-black text-primary-foreground">
+            <Avatar className="size-10 border border-brand-line">
+              <AvatarFallback className="bg-brand-tint text-sm font-semibold text-primary">
                 {initials}
               </AvatarFallback>
             </Avatar>
             <span className="min-w-0">
-              <strong className="block truncate text-sm font-black text-foreground">
+              <strong className="block truncate text-sm font-semibold text-foreground">
                 {accountName}
               </strong>
-              <small className="text-xs font-bold text-muted-foreground">
+              <small className="text-xs text-muted-foreground">
                 {accountSubtitle}
               </small>
             </span>

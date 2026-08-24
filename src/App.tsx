@@ -23,28 +23,17 @@ import { listAuctionHouseSales, listMyWins } from './api/salesApi';
 import { createNotificationSocket } from './api/socket';
 import { upsertSellerProfile } from './api/usersApi';
 import { AccountMenu } from './components/AccountMenu';
-import { AuctionCard, AuctionCardSkeleton } from './components/AuctionCard';
-import { AuctionBroadcastControls } from './components/AuctionBroadcastControls';
-import { DeclareWinnerPanel } from './components/DeclareWinnerPanel';
-import { AuctionStreamPlayer } from './components/AuctionStreamPlayer';
+import { AuctionRoomPage } from './pages/AuctionRoomPage';
+import { AuthPage } from './pages/AuthPage';
+import { HomePage } from './pages/HomePage';
+import { AccountDetailsPage } from './pages/AccountDetailsPage';
+import { CreateAuctionPage } from './pages/CreateAuctionPage';
+import { MyWinsPage } from './pages/MyWinsPage';
+import { OfficeInvitePage } from './pages/OfficeInvitePage';
+import { RegisterLotPage } from './pages/RegisterLotPage';
+import { SalesPage } from './pages/SalesPage';
+import { SellerProfilePage } from './pages/SellerProfilePage';
 import { Button } from './components/ui/button';
-import { Input } from './components/ui/input';
-import { Separator } from './components/ui/separator';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from './components/ui/select';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from './components/ui/sheet';
 import type { Auction, AuctionStreamState } from './types/auction';
 import type { CreateAuctionPayload } from './types/auction';
 import type { CreateLotPayload, Lot, LotImagePayload } from './types/lot';
@@ -70,20 +59,7 @@ import {
   validateCpfOrCnpj,
   validatePhone,
 } from './utils/brFields';
-import {
-  formatBidStatus,
-  formatLotStatus,
-  formatRegistrationStatus,
-} from './utils/auctionLabels';
-import {
-  CalendarDays,
-  ChevronDown,
-  ChevronUp,
-  Plus,
-  Radio,
-  Search,
-  Sprout,
-} from 'lucide-react';
+import { Plus, Radio } from 'lucide-react';
 
 const emptyLotForm = {
   code: '',
@@ -196,7 +172,7 @@ function getAuctionDisplayStatus(auction: Auction) {
   }
 
   if (auction.stream?.status === 'ENDED') {
-    return 'STREAM_ENDED';
+    return 'FINISHED';
   }
 
   if (auction.stream?.status === 'ERROR') {
@@ -287,16 +263,6 @@ function persistAuctionHouseAuth(accessToken: string, auctionHouse: AuctionHouse
   localStorage.removeItem(authStorage.userKey);
 }
 
-function getAuthSubmitLabel(isSubmitting: boolean, authMode: AuthMode) {
-  if (isSubmitting) {
-    return 'Processando...';
-  }
-  if (authMode === 'register') {
-    return 'Criar conta e entrar';
-  }
-  return 'Entrar';
-}
-
 function getLotStageMessage(status: string, consignmentId?: string | null) {
   if (status === 'IN_AUCTION') {
     return 'Este lote está em pista e recebendo lances.';
@@ -311,16 +277,6 @@ function getLotStageMessage(status: string, consignmentId?: string | null) {
     return 'Lote enviado por um vendedor, aguardando sua confirmação.';
   }
   return 'Lote pronto para ser liberado.';
-}
-
-function getLotSubmitLabel(isSubmitting: boolean, currentAuctionHouse: AuctionHouse | null) {
-  if (isSubmitting) {
-    return 'Enviando...';
-  }
-  if (currentAuctionHouse) {
-    return 'Adicionar lote ao remate';
-  }
-  return 'Enviar para aprovacao';
 }
 
 function App() {
@@ -379,8 +335,10 @@ function App() {
   );
   const [auctionHouseSales, setAuctionHouseSales] = useState<Sale[]>([]);
   const [isLoadingSales, setIsLoadingSales] = useState(false);
+  const [salesError, setSalesError] = useState('');
   const [myWins, setMyWins] = useState<Sale[]>([]);
   const [isLoadingMyWins, setIsLoadingMyWins] = useState(false);
+  const [myWinsError, setMyWinsError] = useState('');
   const [winToast, setWinToast] = useState<SaleWonNotification | null>(null);
 
   const isAuctionOwnedByCurrentOffice = useCallback(
@@ -567,11 +525,13 @@ function App() {
 
   const loadAuctionHouseSales = useCallback(async () => {
     setIsLoadingSales(true);
+    setSalesError('');
 
     try {
       setAuctionHouseSales(await listAuctionHouseSales());
     } catch {
       setAuctionHouseSales([]);
+      setSalesError('Não foi possível carregar as vendas agora.');
     } finally {
       setIsLoadingSales(false);
     }
@@ -579,11 +539,13 @@ function App() {
 
   const loadMyWins = useCallback(async () => {
     setIsLoadingMyWins(true);
+    setMyWinsError('');
 
     try {
       setMyWins(await listMyWins());
     } catch {
       setMyWins([]);
+      setMyWinsError('Não foi possível carregar seus arremates agora.');
     } finally {
       setIsLoadingMyWins(false);
     }
@@ -683,28 +645,43 @@ function App() {
       return;
     }
 
-    void loadBuyerRegistrations();
+    let isCanceled = false;
+    queueMicrotask(() => {
+      if (!isCanceled) {
+        void loadBuyerRegistrations();
+      }
+    });
     const interval = setInterval(() => {
       void loadBuyerRegistrations();
     }, 5000);
 
-    return () => clearInterval(interval);
+    return () => {
+      isCanceled = true;
+      clearInterval(interval);
+    };
   }, [view, canManageSelectedAuction, loadBuyerRegistrations]);
 
   // Comprador: a liberacao e por escritorio (vale para todos os remates dele),
   // entao buscamos ao entrar na sala e mantemos atualizado por polling.
   useEffect(() => {
+    let isCanceled = false;
+
     if (
       view !== 'auctionRoom' ||
       !currentUser ||
       currentAuctionHouse ||
       !selectedAuctionHouseId
     ) {
-      setMyRegistration(undefined);
-      return;
+      queueMicrotask(() => {
+        if (!isCanceled) {
+          setMyRegistration(undefined);
+        }
+      });
+      return () => {
+        isCanceled = true;
+      };
     }
 
-    let isCanceled = false;
     const auctionHouseId = selectedAuctionHouseId;
 
     const fetchRegistration = () => {
@@ -732,7 +709,7 @@ function App() {
 
   // Mantem os lances do lote em pista atualizados para todos na sala.
   useEffect(() => {
-    if (view !== 'auctionRoom' || !inPistaLot) {
+    if (view !== 'auctionRoom' || !inPistaLot?.id) {
       return;
     }
 
@@ -755,7 +732,19 @@ function App() {
       ? Number(winning.amount) + PLATFORM_BID_INCREMENT
       : Number(inPistaLot.initialPrice ?? 0);
 
-    setBidAmount(String(suggested));
+    let isCanceled = false;
+    queueMicrotask(() => {
+      if (!isCanceled) {
+        setBidAmount(String(suggested));
+      }
+    });
+
+    return () => {
+      isCanceled = true;
+    };
+    // O valor digitado nao pode ser sobrescrito a cada refresh do mesmo lote.
+    // A sugestao so deve mudar quando a identidade do lote em pista mudar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inPistaLot?.id]);
 
   useEffect(() => {
@@ -923,31 +912,6 @@ function App() {
     } catch {
       setError('Nao foi possivel atualizar a solicitacao do comprador.');
     }
-  }
-
-  function renderLotImageInput() {
-    return (
-      <div className="image-upload-field">
-        <label>
-          Imagens do lote
-          <input accept="image/*" multiple type="file" onChange={handleLotImageChange} />
-        </label>
-
-        {lotImages.length > 0 && (
-          <div className="image-upload-list">
-            {lotImages.map((image) => (
-              <div className="image-upload-item" key={image.id}>
-                <img alt="" src={image.dataUrl} />
-                <span>{image.fileName}</span>
-                <button type="button" onClick={() => removeLotImage(image.id)}>
-                  Remover
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    );
   }
 
   function updateAuctionField(field: keyof AuctionFormState, value: string) {
@@ -1357,6 +1321,10 @@ function App() {
     setCurrentAuctionHouse(null);
     setSelectedAuctionId(null);
     setSelectedStreamState(null);
+    setAuctionHouseSales([]);
+    setSalesError('');
+    setMyWins([]);
+    setMyWinsError('');
     clearAuctionThumbnail();
     setView('home');
   }
@@ -1371,99 +1339,9 @@ function App() {
     setView('accountDetails');
   }
 
-  function renderAccountDetails() {
-    if (currentAuctionHouse) {
-      const accountRows = [
-        ['Nome', currentAuctionHouse.name],
-        ['CNPJ/documento', currentAuctionHouse.document || '-'],
-        ['E-mail', currentAuctionHouse.email],
-        ['Telefone', currentAuctionHouse.phone || '-'],
-        ['Cidade', currentAuctionHouse.city || '-'],
-        ['Estado', currentAuctionHouse.state || '-'],
-        ['País', currentAuctionHouse.country || '-'],
-        ['Status da conta', currentAuctionHouse.status],
-      ];
-
-      return (
-        <section className="account-page">
-          <button className="text-action" type="button" onClick={() => setView('home')}>
-            Voltar aos remates
-          </button>
-          <div className="account-details-shell">
-            <div className="account-details-hero">
-              <span className="eyebrow">Dados do escritório</span>
-              <h1>{currentAuctionHouse.name}</h1>
-              <p>Informações públicas e operacionais da conta autenticada.</p>
-            </div>
-            <div className="account-details-card">
-              <div className="account-logo-preview">
-                {currentAuctionHouse.logoUrl ? (
-                  <img alt="" src={resolveMediaUrl(currentAuctionHouse.logoUrl)} />
-                ) : (
-                  <span>{currentAuctionHouse.name.slice(0, 2).toUpperCase()}</span>
-                )}
-              </div>
-              <dl className="account-data-grid">
-                {accountRows.map(([label, value]) => (
-                  <div key={label}>
-                    <dt>{label}</dt>
-                    <dd>{value}</dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-          </div>
-          {error && <p className="form-error">{error}</p>}
-        </section>
-      );
-    }
-
-    const producerStatus = currentUser?.sellerProfile
-      ? currentUser.sellerProfile.verificationStatus || 'Cadastrado'
-      : 'Não cadastrado';
-    const accountRows = [
-      ['Nome', currentUser?.name || '-'],
-      ['CPF/documento', currentUser?.document || '-'],
-      ['E-mail', currentUser?.email || '-'],
-      ['Telefone', currentUser?.phone || '-'],
-      ['Status da conta', currentUser?.status || '-'],
-      ['Status do cadastro de produtor', producerStatus],
-    ];
-
-    return (
-      <section className="account-page">
-        <button className="text-action" type="button" onClick={() => setView('home')}>
-          Voltar aos remates
-        </button>
-        <div className="account-details-shell">
-          <div className="account-details-hero">
-            <span className="eyebrow">Meus dados</span>
-            <h1>{currentUser?.name || 'Minha conta'}</h1>
-            <p>Informações da conta autenticada e situação do cadastro de produtor.</p>
-          </div>
-          <div className="account-details-card">
-            <div className="account-logo-preview">
-              <span>{(currentUser?.name || 'CA').slice(0, 2).toUpperCase()}</span>
-            </div>
-            <dl className="account-data-grid">
-              {accountRows.map(([label, value]) => (
-                <div key={label}>
-                  <dt>{label}</dt>
-                  <dd>{value}</dd>
-                </div>
-              ))}
-            </dl>
-          </div>
-        </div>
-        {error && <p className="form-error">{error}</p>}
-      </section>
-    );
-  }
-
   const canCompleteSellerProfile = Boolean(
     currentUser && !currentUser.buyerProfile && !currentUser.sellerProfile,
   );
-  const isRegisterMode = authMode === 'register';
   const selectedLotAuctionId = selectableAuctions.some(
     (auction) => auction.id === lotForm.auctionId,
   )
@@ -1472,436 +1350,65 @@ function App() {
 
   if (officeInviteToken) {
     return (
-      <main className="app-shell auth-shell">
-        <section className="register-page user-register-page">
-          <div className="register-copy">
-            <span className="brand-inline">
-              <span className="brand-mark">CA</span>
-              Cattle Auction
-            </span>
-            <span className="eyebrow">Convite de escritorio</span>
-            <h1>Cadastro do escritorio</h1>
-            <p>
-              Este cadastro e liberado apenas pelo link de convite enviado pela
-              plataforma.
-            </p>
-          </div>
-
-          <form className="lot-form user-form" onSubmit={handleAuctionHouseInviteSubmit}>
-            <div className="form-header">
-              <h2>Dados do escritorio</h2>
-            </div>
-
-            {isValidatingOfficeInvite || officeInviteStatus === 'idle' ? (
-              <p className="loading-message">Validando convite...</p>
-            ) : officeInviteStatus === 'invalid' ? (
-              <p className="form-error">
-                Link invalido, expirado ou ja utilizado. Solicite um novo convite.
-              </p>
-            ) : (
-              <>
-                <label>
-                  Nome do escritorio
-                  <input
-                    required
-                    value={auctionHouseInviteForm.name}
-                    onChange={(event) =>
-                      updateAuctionHouseInviteField('name', event.target.value)
-                    }
-                    placeholder="Leiloes Campo Alto"
-                  />
-                </label>
-
-                <div className="form-grid">
-                  <label>
-                    E-mail
-                    <input
-                      required
-                      readOnly={isOfficeInviteEmailLocked}
-                      type="email"
-                      value={auctionHouseInviteForm.email}
-                      onChange={(event) =>
-                        updateAuctionHouseInviteField('email', event.target.value)
-                      }
-                      placeholder="escritorio@email.com"
-                    />
-                  </label>
-
-                  <label>
-                    Senha
-                    <input
-                      required
-                      minLength={6}
-                      type="password"
-                      value={auctionHouseInviteForm.password}
-                      onChange={(event) =>
-                        updateAuctionHouseInviteField('password', event.target.value)
-                      }
-                      placeholder="Mínimo 6 caracteres"
-                    />
-                  </label>
-                </div>
-
-                <div className="form-grid">
-                  <label>
-                    CNPJ
-                    <input
-                      inputMode="numeric"
-                      maxLength={18}
-                      value={auctionHouseInviteForm.document}
-                      onChange={(event) =>
-                        updateAuctionHouseInviteDocument(event.target.value)
-                      }
-                      placeholder="00.000.000/0000-00"
-                    />
-                    {showDevDocumentTools && (
-                      <button
-                        className="inline-helper-action"
-                        type="button"
-                        onClick={fillDevAuctionHouseCnpj}
-                      >
-                        Gerar CNPJ de teste
-                      </button>
-                    )}
-                  </label>
-
-                  <label>
-                    Telefone
-                    <input
-                      inputMode="numeric"
-                      maxLength={15}
-                      value={auctionHouseInviteForm.phone}
-                      onChange={(event) =>
-                        updateAuctionHouseInvitePhone(event.target.value)
-                      }
-                      placeholder="(00) 00000-0000"
-                    />
-                  </label>
-                </div>
-
-                <div className="form-grid three">
-                  <label>
-                    Cidade
-                    <input
-                      value={auctionHouseInviteForm.city}
-                      onChange={(event) =>
-                        updateAuctionHouseInviteField('city', event.target.value)
-                      }
-                      placeholder="Campo Grande"
-                    />
-                  </label>
-
-                  <label>
-                    Estado
-                    <input
-                      maxLength={2}
-                      value={auctionHouseInviteForm.state}
-                      onChange={(event) =>
-                        updateAuctionHouseInviteField(
-                          'state',
-                          event.target.value.toUpperCase(),
-                        )
-                      }
-                      placeholder="MS"
-                    />
-                  </label>
-
-                  <label>
-                    Pais
-                    <input
-                      value={auctionHouseInviteForm.country}
-                      onChange={(event) =>
-                        updateAuctionHouseInviteField('country', event.target.value)
-                      }
-                      placeholder="BR"
-                    />
-                  </label>
-                </div>
-
-                {error && <p className="form-error">{error}</p>}
-
-                <button
-                  className="primary-action"
-                  disabled={isSubmitting || officeInviteStatus !== 'valid'}
-                  type="submit"
-                >
-                  {isSubmitting ? 'Criando escritorio...' : 'Criar conta do escritorio'}
-                </button>
-              </>
-            )}
-          </form>
-        </section>
-      </main>
+      <OfficeInvitePage
+        form={auctionHouseInviteForm}
+        status={officeInviteStatus}
+        isValidating={isValidatingOfficeInvite}
+        isEmailLocked={isOfficeInviteEmailLocked}
+        showDevDocumentTools={showDevDocumentTools}
+        isSubmitting={isSubmitting}
+        error={error}
+        onSubmit={handleAuctionHouseInviteSubmit}
+        onFieldChange={updateAuctionHouseInviteField}
+        onDocumentChange={updateAuctionHouseInviteDocument}
+        onPhoneChange={updateAuctionHouseInvitePhone}
+        onFillDevDocument={fillDevAuctionHouseCnpj}
+      />
     );
   }
 
   if (!isAuthenticated) {
     return (
-      <main className="app-shell auth-shell">
-        <section className="register-page user-register-page">
-          <div className="register-copy">
-            <span className="brand-inline">
-              <span className="brand-mark">CA</span>
-              Cattle Auction
-            </span>
-            <span className="eyebrow">Acesso da plataforma</span>
-            <h1>Acesso aos remates</h1>
-            <p>
-              Entre com seu e-mail e senha. O sistema identifica automaticamente
-              contas de usuários e escritórios.
-            </p>
-          </div>
-
-          <form
-            className="lot-form user-form"
-            onSubmit={isRegisterMode ? handleUserSubmit : handleLoginSubmit}
-          >
-            <div className="auth-tabs" role="tablist" aria-label="Acesso">
-              <button
-                className={authMode === 'login' ? 'selected' : ''}
-                type="button"
-                onClick={() => {
-                  setAuthMode('login');
-                  setError('');
-                }}
-              >
-                Login
-              </button>
-              <button
-                className={authMode === 'register' ? 'selected' : ''}
-                type="button"
-                onClick={() => {
-                  setAuthMode('register');
-                  setError('');
-                }}
-              >
-                Cadastro
-              </button>
-            </div>
-
-            <div className="form-header">
-              <h2>
-                {authMode === 'register'
-                  ? 'Cadastro de usuário'
-                  : 'Entrar na conta'}
-              </h2>
-            </div>
-
-            {authMode === 'register' && (
-              <label>
-                Nome completo
-                <input
-                  required
-                  value={userForm.name}
-                  onChange={(event) => updateUserField('name', event.target.value)}
-                  placeholder="Pedro Ribeiro"
-                />
-              </label>
-            )}
-
-            {authMode === 'register' && (
-              <div className="account-type-group" aria-label="Tipo de cadastro">
-                <button
-                  className={accountType === 'BUYER' ? 'selected' : ''}
-                  type="button"
-                  onClick={() => setAccountType('BUYER')}
-                >
-                  Comprador
-                </button>
-                <button
-                  className={accountType === 'SELLER' ? 'selected' : ''}
-                  type="button"
-                  onClick={() => setAccountType('SELLER')}
-                >
-                  Vendedor
-                </button>
-              </div>
-            )}
-
-            <div className="form-grid">
-              <label>
-                E-mail
-                <input
-                  required
-                  type="email"
-                  value={userForm.email}
-                  onChange={(event) => updateUserField('email', event.target.value)}
-                  placeholder="pedro@email.com"
-                />
-              </label>
-
-              <label>
-                Senha
-                <input
-                  required
-                  minLength={6}
-                  type="password"
-                  value={userForm.password}
-                  onChange={(event) => updateUserField('password', event.target.value)}
-                  placeholder="Mínimo 6 caracteres"
-                />
-              </label>
-            </div>
-
-            {authMode === 'register' && (
-              <>
-                <div className="form-grid">
-                  <label>
-                    Telefone
-                    <input
-                      inputMode="numeric"
-                      maxLength={15}
-                      value={userForm.phone}
-                      onChange={(event) => updateUserPhone(event.target.value)}
-                      placeholder="(00) 00000-0000"
-                    />
-                  </label>
-
-                  <label>
-                    Documento
-                    <input
-                      inputMode="numeric"
-                      maxLength={18}
-                      value={userForm.document}
-                      onChange={(event) => updateUserDocument(event.target.value)}
-                      placeholder="CPF ou CNPJ"
-                    />
-                    {showDevDocumentTools && (
-                      <button
-                        className="inline-helper-action"
-                        type="button"
-                        onClick={fillDevUserCpf}
-                      >
-                        Gerar CPF de teste
-                      </button>
-                    )}
-                  </label>
-                </div>
-
-                {accountType === 'SELLER' && (
-                  <div className="seller-inline-fields">
-                    <div className="form-header compact">
-                      <h2>Dados do vendedor</h2>
-                    </div>
-
-                    <label>
-                      Nome da fazenda
-                      <input
-                        value={sellerProfileForm.farmName}
-                        onChange={(event) =>
-                          updateSellerProfileField('farmName', event.target.value)
-                        }
-                        placeholder="Fazenda Santa Maria"
-                      />
-                    </label>
-
-                    <div className="form-grid">
-                      <label>
-                        Inscrição rural
-                        <input
-                          value={sellerProfileForm.ruralRegistration}
-                          onChange={(event) =>
-                            updateSellerProfileField(
-                              'ruralRegistration',
-                              event.target.value,
-                            )
-                          }
-                          placeholder="Registro do produtor"
-                        />
-                      </label>
-
-                      <label>
-                        Inscrição estadual
-                        <input
-                          value={sellerProfileForm.stateRegistration}
-                          onChange={(event) =>
-                            updateSellerProfileField(
-                              'stateRegistration',
-                              event.target.value,
-                            )
-                          }
-                          placeholder="IE"
-                        />
-                      </label>
-                    </div>
-
-                    <div className="form-grid three">
-                      <label>
-                        Cidade
-                        <input
-                          value={sellerProfileForm.city}
-                          onChange={(event) =>
-                            updateSellerProfileField('city', event.target.value)
-                          }
-                          placeholder="Campo Grande"
-                        />
-                      </label>
-
-                      <label>
-                        Estado
-                        <input
-                          maxLength={2}
-                          value={sellerProfileForm.state}
-                          onChange={(event) =>
-                            updateSellerProfileField(
-                              'state',
-                              event.target.value.toUpperCase(),
-                            )
-                          }
-                          placeholder="MS"
-                        />
-                      </label>
-
-                      <label>
-                        País
-                        <input
-                          value={sellerProfileForm.country}
-                          onChange={(event) =>
-                            updateSellerProfileField('country', event.target.value)
-                          }
-                          placeholder="BR"
-                        />
-                      </label>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-
-            {authMode === 'login' && (
-              <p className="helper-message">
-                Escritórios usam as credenciais institucionais criadas pelo sistema.
-              </p>
-            )}
-
-            {error && <p className="form-error">{error}</p>}
-
-            <button className="primary-action" disabled={isSubmitting} type="submit">
-              {getAuthSubmitLabel(isSubmitting, authMode)}
-            </button>
-          </form>
-        </section>
-      </main>
+      <AuthPage
+        authMode={authMode}
+        accountType={accountType}
+        userForm={userForm}
+        sellerProfileForm={sellerProfileForm}
+        isSubmitting={isSubmitting}
+        error={error}
+        showDevDocumentTools={showDevDocumentTools}
+        onSubmit={authMode === 'register' ? handleUserSubmit : handleLoginSubmit}
+        onAuthModeChange={(mode) => {
+          setAuthMode(mode);
+          setError('');
+        }}
+        onAccountTypeChange={setAccountType}
+        onUserFieldChange={updateUserField}
+        onUserPhoneChange={updateUserPhone}
+        onUserDocumentChange={updateUserDocument}
+        onFillDevUserCpf={fillDevUserCpf}
+        onSellerProfileFieldChange={updateSellerProfileField}
+      />
     );
   }
 
   return (
     <main className="app-shell">
-      <header className="sticky top-0 z-40 border-b border-border/70 bg-background shadow-[0_6px_20px_rgba(15,23,42,0.05)]">
-        <div className="mx-auto flex min-h-20 w-full max-w-7xl items-center justify-between gap-4 px-5 py-3 sm:px-8">
+      <header className="sticky top-0 z-40 border-b border-border bg-card/95 backdrop-blur-lg">
+        <div className="mx-auto flex min-h-15 w-full max-w-[1360px] items-center justify-between gap-3 px-4 py-2 sm:px-6 lg:px-8">
           <button
-            className="flex min-w-0 items-center gap-3 rounded-full text-left transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            className="flex min-w-0 items-center gap-3 rounded-md text-left transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             type="button"
             onClick={() => setView('home')}
           >
-            <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary text-sm font-black text-primary-foreground shadow-[0_14px_32px_rgba(18,98,70,0.22)]">
+            <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-brand-line bg-brand-tint text-xs font-semibold text-primary">
               CA
             </span>
             <span className="hidden min-w-0 sm:grid">
-              <strong className="text-base font-black leading-tight text-foreground">
+              <strong className="text-sm font-semibold leading-tight text-foreground">
                 Cattle Auction
               </strong>
-              <small className="truncate text-xs font-bold text-muted-foreground">
+              <small className="truncate text-xs text-muted-foreground">
                 Remates e transmissões ao vivo
               </small>
             </span>
@@ -1913,7 +1420,7 @@ function App() {
           >
             <Button
               variant={view === 'home' ? 'secondary' : 'ghost'}
-              className="hidden rounded-full font-black sm:inline-flex"
+              className="hidden rounded-md font-semibold sm:inline-flex"
               type="button"
               onClick={() => setView('home')}
             >
@@ -1922,12 +1429,13 @@ function App() {
             </Button>
           {currentAuctionHouse && (
             <Button
-              className="rounded-full bg-primary px-4 font-black text-primary-foreground shadow-[0_14px_34px_rgba(18,98,70,0.22)] hover:bg-primary/90"
+              aria-label="Criar remate"
+              className="rounded-md px-3 font-semibold sm:px-4"
               type="button"
               onClick={() => setView('createAuction')}
             >
               <Plus className="size-4" />
-              Criar remate
+              <span className="hidden sm:inline">Criar remate</span>
             </Button>
           )}
           <AccountMenu
@@ -1987,1170 +1495,146 @@ function App() {
       )}
 
       {view === 'auctionRoom' ? (
-        <section className="auction-room">
-          <div className="video-column">
-            <button className="text-action" type="button" onClick={() => setView('home')}>
-              Voltar aos remates
-            </button>
-
-            {selectedAuction && selectedAuctionStreamState?.canBroadcast ? (
-              <AuctionBroadcastControls
-                auction={selectedAuction}
-                lotsCount={selectedAuctionLots.length}
-                streamState={selectedAuctionStreamState}
-                onStreamStateChange={syncSelectedStreamState}
-              />
-            ) : (
-              <AuctionStreamPlayer
-                auction={selectedAuction}
-                lotsCount={selectedAuctionLots.length}
-                streamState={selectedAuctionStreamState}
-                onStreamStateChange={syncSelectedStreamState}
-              />
-            )}
-
-            {canManageSelectedAuction && (
-              <DeclareWinnerPanel
-                inPistaLot={inPistaLot}
-                winningBid={inPistaWinningBid}
-                onDeclared={refreshLotsQuietly}
-              />
-            )}
-
-            {!canManageSelectedAuction && (
-              <div className="bid-bar">
-                {!inPistaLot ? (
-                  <p className="bid-bar-empty">Nenhum lote em pista no momento.</p>
-                ) : (
-                  <>
-                    <div className="bid-bar-info">
-                      <span className="eyebrow">Em pista</span>
-                      <strong>
-                        {inPistaLot.code} · {inPistaLot.title}
-                      </strong>
-                      <span className="bid-current">
-                        Lance atual:{' '}
-                        {formatCurrency(
-                          inPistaWinningBid?.amount ?? inPistaLot.initialPrice,
-                        )}
-                      </span>
-                    </div>
-
-                    {currentUser && !currentAuctionHouse && (
-                      <div className="bid-bar-action">
-                        {myRegistration === undefined ? (
-                          <span className="bid-hint">Verificando liberacao...</span>
-                        ) : myRegistration === null ? (
-                          <button
-                            className="primary-action"
-                            disabled={isSubmitting}
-                            type="button"
-                            onClick={handleRequestApproval}
-                          >
-                            Solicitar liberacao para lances
-                          </button>
-                        ) : myRegistration.status === 'PENDING' ? (
-                          <span className="bid-hint">
-                            Aguardando aprovacao do escritorio.
-                          </span>
-                        ) : myRegistration.status === 'BLOCKED' ? (
-                          <span className="bid-hint">
-                            Voce esta bloqueado para lances neste escritorio.
-                          </span>
-                        ) : myRegistration.status === 'REJECTED' ? (
-                          <button
-                            className="secondary-action"
-                            disabled={isSubmitting}
-                            type="button"
-                            onClick={handleRequestApproval}
-                          >
-                            Solicitacao negada - solicitar novamente
-                          </button>
-                        ) : (
-                          <form className="bid-form" onSubmit={handleSubmitBid}>
-                            <div className="bid-stepper">
-                              <input
-                                className="bid-input"
-                                min="0"
-                                step={BID_STEP}
-                                type="number"
-                                value={bidAmount}
-                                onChange={(event) => setBidAmount(event.target.value)}
-                                aria-label="Valor do lance"
-                              />
-                              <div className="bid-arrows">
-                                <button
-                                  className="bid-arrow"
-                                  type="button"
-                                  aria-label={`Aumentar ${BID_STEP}`}
-                                  onClick={() => stepBid(BID_STEP)}
-                                >
-                                  <ChevronUp />
-                                </button>
-                                <button
-                                  className="bid-arrow"
-                                  type="button"
-                                  aria-label={`Diminuir ${BID_STEP}`}
-                                  onClick={() => stepBid(-BID_STEP)}
-                                >
-                                  <ChevronDown />
-                                </button>
-                              </div>
-                            </div>
-                            <button
-                              className="primary-action"
-                              disabled={isSubmitting}
-                              type="submit"
-                            >
-                              {isSubmitting ? 'Enviando...' : 'Dar lance'}
-                            </button>
-                          </form>
-                        )}
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {error && <p className="form-error">{error}</p>}
-              </div>
-            )}
-
-            <div className="auction-room-header">
-              <div>
-                <span className="eyebrow">Sala do remate</span>
-                <h1>{selectedAuction?.title || 'Remate'}</h1>
-                {selectedAuction?.description && <p>{selectedAuction.description}</p>}
-              </div>
-              {canManageSelectedAuction && (
-                <button
-                  className="secondary-action"
-                  type="button"
-                  onClick={() => setView('createAuction')}
-                >
-                  Novo remate
-                </button>
-              )}
-            </div>
-
-            <div className="auction-lot-list">
-              <div className="section-title-row">
-                <h2>Lotes do remate</h2>
-                <span>{selectedAuctionLots.length}</span>
-              </div>
-
-              {isLoadingLots ? (
-                <p className="loading-message">Carregando lotes do remate...</p>
-              ) : selectedAuctionLots.length === 0 ? (
-                <p className="loading-message">Nenhum lote adicionado neste remate.</p>
-              ) : (
-                <div className="room-lots">
-                  {selectedAuctionLots.map((lot) => (
-                    <button
-                      className={lot.id === createdLotId ? 'room-lot highlighted' : 'room-lot'}
-                      key={lot.id}
-                      type="button"
-                      onClick={() => {
-                        setDetailLotImages([]);
-                        setSelectedLotId(lot.id);
-                      }}
-                    >
-                      <strong>{lot.code}</strong>
-                      <div>
-                        <h3>{lot.title}</h3>
-                        <span>{formatCurrency(lot.initialPrice)}</span>
-                      </div>
-                      <small>
-                        {lot.media?.length
-                          ? `${lot.media.length} imagens`
-                          : formatLotStatus(lot.status)}
-                      </small>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {canManageSelectedAuction && (
-            <aside className="room-side-panel">
-              <div className="form-header compact">
-                <h2>Adicionar lote</h2>
-              </div>
-
-              <form className="room-lot-form" onSubmit={handleLotSubmit}>
-                <label>
-                  Codigo
-                  <input
-                    required
-                    value={lotForm.code}
-                    onChange={(event) => updateLotField('code', event.target.value)}
-                    placeholder="LOTE-001"
-                  />
-                </label>
-
-                <label>
-                  Titulo
-                  <input
-                    required
-                    value={lotForm.title}
-                    onChange={(event) => updateLotField('title', event.target.value)}
-                    placeholder="Nelore PO - lote jovem"
-                  />
-                </label>
-
-                <div className="form-grid">
-                  <label>
-                    Raca
-                    <input
-                      value={lotForm.breed}
-                      onChange={(event) => updateLotField('breed', event.target.value)}
-                      placeholder="Nelore"
-                    />
-                  </label>
-
-                  <label>
-                    Categoria
-                    <input
-                      value={lotForm.category}
-                      onChange={(event) => updateLotField('category', event.target.value)}
-                      placeholder="Corte"
-                    />
-                  </label>
-                </div>
-
-                <div className="form-grid">
-                  <label>
-                    Quantidade
-                    <input
-                      min="1"
-                      type="number"
-                      value={lotForm.quantity}
-                      onChange={(event) => updateLotField('quantity', event.target.value)}
-                    />
-                  </label>
-
-                  <label>
-                    Valor inicial
-                    <input
-                      min="0"
-                      type="number"
-                      value={lotForm.initialPrice}
-                      onChange={(event) => updateLotField('initialPrice', event.target.value)}
-                      placeholder="15000"
-                    />
-                  </label>
-                </div>
-
-                <label>
-                  Descricao
-                  <textarea
-                    value={lotForm.description}
-                    onChange={(event) => updateLotField('description', event.target.value)}
-                    placeholder="Descricao do lote."
-                  />
-                </label>
-
-                {renderLotImageInput()}
-
-                {error && <p className="form-error">{error}</p>}
-                {createdLotId && (
-                  <p className="success-message">Lote adicionado ao remate.</p>
-                )}
-
-                <button
-                  className="primary-action"
-                  disabled={isSubmitting || !selectedAuction}
-                  type="submit"
-                >
-                  {isSubmitting ? 'Adicionando...' : 'Adicionar lote'}
-                </button>
-              </form>
-
-              <div className="form-header compact">
-                <h2>Compradores</h2>
-              </div>
-
-              {isLoadingBuyerRegistrations ? (
-                <p className="loading-message">Carregando solicitacoes...</p>
-              ) : buyerRegistrations.length === 0 ? (
-                <p className="loading-message">Nenhuma solicitacao de comprador ainda.</p>
-              ) : (
-                <ul className="buyer-registration-list">
-                  {buyerRegistrations.map((registration) => (
-                    <li key={registration.id}>
-                      <div>
-                        <strong>{registration.buyer?.name || 'Comprador'}</strong>
-                        <small>{registration.buyer?.email}</small>
-                      </div>
-                      <span>{formatRegistrationStatus(registration.status)}</span>
-                      {registration.status === 'PENDING' && (
-                        <div className="modal-actions">
-                          <button
-                            className="primary-action"
-                            type="button"
-                            onClick={() => handleReviewRegistration(registration.id, 'APPROVED')}
-                          >
-                            Aprovar
-                          </button>
-                          <button
-                            className="secondary-action"
-                            type="button"
-                            onClick={() => handleReviewRegistration(registration.id, 'REJECTED')}
-                          >
-                            Rejeitar
-                          </button>
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </aside>
-          )}
-
-          {selectedLot && (
-            <div
-              aria-labelledby="lot-detail-title"
-              aria-modal="true"
-              className="modal-backdrop"
-              role="dialog"
-            >
-              <section className="lot-detail-modal">
-                <div className="modal-header">
-                  <div>
-                    <span className="eyebrow">Detalhes do lote</span>
-                    <h2 id="lot-detail-title">{selectedLot.title}</h2>
-                  </div>
-                  <button
-                    className="text-action"
-                    type="button"
-                    onClick={() => {
-                      setDetailLotImages([]);
-                      setSelectedLotId(null);
-                    }}
-                  >
-                    Fechar
-                  </button>
-                </div>
-
-                {selectedLot.media?.length ? (
-                  <div className="lot-gallery">
-                    {selectedLot.media.map((media) => (
-                      <img
-                        alt={media.description || selectedLot.title}
-                        key={media.id}
-                        src={resolveMediaUrl(media.url)}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <p className="loading-message">Este lote ainda nao possui imagens.</p>
-                )}
-
-                <dl className="lot-stats detail-stats">
-                  <div>
-                    <dt>Codigo</dt>
-                    <dd>{selectedLot.code}</dd>
-                  </div>
-                  <div>
-                    <dt>Valor</dt>
-                    <dd>{formatCurrency(selectedLot.initialPrice)}</dd>
-                  </div>
-                  <div>
-                    <dt>Qtd.</dt>
-                    <dd>{selectedLot.quantity}</dd>
-                  </div>
-                  <div>
-                    <dt>Status</dt>
-                    <dd>{formatLotStatus(selectedLot.status)}</dd>
-                  </div>
-                </dl>
-
-                {selectedLot.description && <p>{selectedLot.description}</p>}
-
-                {canManageSelectedAuction && (
-                  <div className="detail-image-editor">
-                    <div className="form-header compact">
-                      <h2>Gerenciar lote</h2>
-                    </div>
-
-                    <p className="loading-message compact">
-                      {getLotStageMessage(selectedLot.status, selectedLot.consignmentId)}
-                    </p>
-
-                    <div className="modal-actions">
-                      {selectedLot.status !== 'AVAILABLE' &&
-                        selectedLot.status !== 'IN_AUCTION' && (
-                          <button
-                            className="secondary-action"
-                            disabled={isSubmitting}
-                            type="button"
-                            onClick={() => handleSetLotStage('AVAILABLE')}
-                          >
-                            Liberar lote
-                          </button>
-                        )}
-
-                      {selectedLot.status === 'AVAILABLE' && (
-                        <button
-                          className="primary-action"
-                          disabled={isSubmitting}
-                          type="button"
-                          onClick={() => handleSetLotStage('IN_AUCTION')}
-                        >
-                          Colocar em pista
-                        </button>
-                      )}
-
-                      {selectedLot.status === 'IN_AUCTION' && (
-                        <button
-                          className="secondary-action"
-                          disabled={isSubmitting}
-                          type="button"
-                          onClick={() => handleSetLotStage('AVAILABLE')}
-                        >
-                          Retirar de pista
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                <div className="detail-image-editor">
-                  <div className="form-header compact">
-                    <h2>Lances</h2>
-                  </div>
-
-                  <p className="loading-message compact">
-                    Lance atual:{' '}
-                    {formatCurrency(lotWinningBid?.amount ?? selectedLot.initialPrice)}
-                  </p>
-
-                  {selectedLot.bids?.length ? (
-                    <ul className="bid-history">
-                      {selectedLot.bids.map((bid) => (
-                        <li key={bid.id}>
-                          <span>{bid.bidder?.name || 'Comprador'}</span>
-                          <strong>{formatCurrency(bid.amount)}</strong>
-                          <small>{formatBidStatus(bid.status)}</small>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="loading-message compact">Nenhum lance registrado ainda.</p>
-                  )}
-
-                  {currentUser && !currentAuctionHouse && (
-                    <p className="loading-message compact">
-                      Os lances sao feitos pela barra abaixo do video, no lote em pista.
-                    </p>
-                  )}
-                </div>
-
-                {canManageSelectedAuction && (
-                  <div className="detail-image-editor">
-                    <div className="form-header compact">
-                      <h2>Adicionar imagens</h2>
-                    </div>
-
-                    <label>
-                      Novas imagens
-                      <input
-                        accept="image/*"
-                        multiple
-                        type="file"
-                        onChange={handleDetailLotImageChange}
-                      />
-                    </label>
-
-                    {detailLotImages.length > 0 && (
-                      <div className="image-upload-list">
-                        {detailLotImages.map((image) => (
-                          <div className="image-upload-item" key={image.id}>
-                            <img alt="" src={image.dataUrl} />
-                            <span>{image.fileName}</span>
-                            <button
-                              type="button"
-                              onClick={() => removeDetailLotImage(image.id)}
-                            >
-                              Remover
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {error && <p className="form-error">{error}</p>}
-
-                    <button
-                      className="primary-action"
-                      disabled={isSubmitting || detailLotImages.length === 0}
-                      type="button"
-                      onClick={saveDetailLotImages}
-                    >
-                      {isSubmitting ? 'Salvando...' : 'Salvar imagens'}
-                    </button>
-                  </div>
-                )}
-              </section>
-            </div>
-          )}
-        </section>
+        <AuctionRoomPage
+          auction={selectedAuction}
+          bidAmount={bidAmount}
+          bidStep={BID_STEP}
+          buyerRegistrations={buyerRegistrations}
+          canManage={canManageSelectedAuction}
+          createdLotId={createdLotId}
+          detailImages={detailLotImages}
+          error={error}
+          inPistaLot={inPistaLot}
+          inPistaWinningBid={inPistaWinningBid}
+          isBidder={Boolean(currentUser) && !currentAuctionHouse}
+          isLoadingBuyerRegistrations={isLoadingBuyerRegistrations}
+          isLoadingLots={isLoadingLots}
+          isSubmitting={isSubmitting}
+          lotForm={lotForm}
+          lotImages={lotImages}
+          lots={selectedAuctionLots}
+          myRegistration={myRegistration}
+          resolveMediaUrl={resolveMediaUrl}
+          selectedLot={selectedLot}
+          selectedLotStageMessage={
+            selectedLot
+              ? getLotStageMessage(selectedLot.status, selectedLot.consignmentId)
+              : ''
+          }
+          selectedLotWinningBid={lotWinningBid}
+          streamState={selectedAuctionStreamState}
+          onBack={() => setView('home')}
+          onBidAmountChange={setBidAmount}
+          onCloseLotDetail={() => {
+            setDetailLotImages([]);
+            setSelectedLotId(null);
+          }}
+          onCreateAuction={() => setView('createAuction')}
+          onDetailImagesChange={handleDetailLotImageChange}
+          onLotFieldChange={updateLotField}
+          onLotImagesChange={handleLotImageChange}
+          onLotSubmit={handleLotSubmit}
+          onRemoveLotImage={removeLotImage}
+          onRemoveDetailImage={removeDetailLotImage}
+          onRequestApproval={handleRequestApproval}
+          onReviewRegistration={handleReviewRegistration}
+          onSaveDetailImages={saveDetailLotImages}
+          onSelectLot={(lotId) => {
+            setDetailLotImages([]);
+            setSelectedLotId(lotId);
+          }}
+          onSetLotStage={handleSetLotStage}
+          onStepBid={stepBid}
+          onStreamStateChange={syncSelectedStreamState}
+          onSubmitBid={handleSubmitBid}
+          onWinnerDeclared={refreshLotsQuietly}
+        />
       ) : view === 'accountDetails' ? (
-        renderAccountDetails()
+        <AccountDetailsPage
+          auctionHouse={currentAuctionHouse}
+          user={currentUser}
+          error={error}
+          onBack={() => {
+            setError('');
+            setView('home');
+          }}
+          resolveMediaUrl={resolveMediaUrl}
+        />
       ) : view === 'createAuction' ? (
-        <section className="register-page">
-          <div className="register-copy">
-            <span className="eyebrow">Remate do escritorio</span>
-            <h1>Crie ou agende um remate e adicione os lotes.</h1>
-            <p>
-              O remate fica vinculado ao escritorio logado. Depois de salvar, a
-              tela abre direto no cadastro de lotes desse remate.
-            </p>
-          </div>
-
-          <form className="lot-form" onSubmit={handleAuctionSubmit}>
-            <div className="form-header">
-              <h2>Novo remate</h2>
-            </div>
-
-            <label>
-              Titulo
-              <Input
-                required
-                value={auctionForm.title}
-                onChange={(event) => updateAuctionField('title', event.target.value)}
-                placeholder="Remate Primavera 2026"
-                className="mt-2 h-12 rounded-xl border-primary/15 bg-white/75 font-semibold"
-              />
-            </label>
-
-            <label>
-              Data e hora
-              <Input
-                type="datetime-local"
-                value={auctionForm.scheduledAt}
-                onChange={(event) => updateAuctionField('scheduledAt', event.target.value)}
-                className="mt-2 h-12 rounded-xl border-primary/15 bg-white/75 font-semibold"
-              />
-            </label>
-
-            <label>
-              Descricao
-              <textarea
-                value={auctionForm.description}
-                onChange={(event) => updateAuctionField('description', event.target.value)}
-                placeholder="Conjunto de lotes, condicoes comerciais e detalhes do evento."
-              />
-            </label>
-
-            <div className="auction-cover-field">
-              <div>
-                <span>Imagem de capa do remate</span>
-                <small>JPG, PNG ou WEBP. Tamanho máximo de 5 MB.</small>
-              </div>
-
-              {auctionThumbnail ? (
-                <div className="auction-cover-preview">
-                  <img alt="" src={auctionThumbnail.previewUrl} />
-                  <div>
-                    <strong>{auctionThumbnail.file.name}</strong>
-                    <span>{(auctionThumbnail.file.size / 1024 / 1024).toFixed(2)} MB</span>
-                    <div className="auction-cover-actions">
-                      <label className="secondary-action">
-                        Substituir imagem
-                        <input
-                          accept="image/jpeg,image/png,image/webp"
-                          type="file"
-                          onChange={handleAuctionThumbnailChange}
-                        />
-                      </label>
-                      <button className="inline-helper-action" type="button" onClick={clearAuctionThumbnail}>
-                        Remover imagem
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <label className="auction-cover-dropzone">
-                  <span>Selecionar imagem do dispositivo</span>
-                  <small>A capa será exibida nos cards de remates disponíveis.</small>
-                  <input
-                    accept="image/jpeg,image/png,image/webp"
-                    type="file"
-                    onChange={handleAuctionThumbnailChange}
-                  />
-                </label>
-              )}
-            </div>
-
-            {error && <p className="form-error">{error}</p>}
-
-            <button className="primary-action" disabled={isSubmitting} type="submit">
-              {isSubmitting ? 'Salvando...' : 'Criar remate e adicionar lotes'}
-            </button>
-          </form>
-        </section>
+        <CreateAuctionPage
+          auctionForm={auctionForm}
+          auctionThumbnail={auctionThumbnail}
+          error={error}
+          isSubmitting={isSubmitting}
+          onClearThumbnail={clearAuctionThumbnail}
+          onFieldChange={updateAuctionField}
+          onSubmit={handleAuctionSubmit}
+          onThumbnailChange={handleAuctionThumbnailChange}
+        />
       ) : view === 'sellerProfile' ? (
-        <section className="register-page">
-          <div className="register-copy">
-            <span className="eyebrow">Cadastro de produtor</span>
-            <h1>Complete seus dados para solicitar lotes em remates.</h1>
-            <p>
-              O cadastro inicial continua sendo uma conta comum. Estes dados rurais
-              habilitam o envio de lotes para analise do escritorio responsavel.
-            </p>
-          </div>
-
-          <form className="lot-form" onSubmit={handleSellerProfileSubmit}>
-            <div className="form-header">
-              <h2>Dados do produtor</h2>
-            </div>
-
-            <label>
-              Nome da fazenda
-              <input
-                value={sellerProfileForm.farmName}
-                onChange={(event) => updateSellerProfileField('farmName', event.target.value)}
-                placeholder="Fazenda Santa Maria"
-              />
-            </label>
-
-            <div className="form-grid">
-              <label>
-                Inscrição rural
-                <input
-                  value={sellerProfileForm.ruralRegistration}
-                  onChange={(event) =>
-                    updateSellerProfileField('ruralRegistration', event.target.value)
-                  }
-                  placeholder="Registro do produtor"
-                />
-              </label>
-
-              <label>
-                Inscrição estadual
-                <input
-                  value={sellerProfileForm.stateRegistration}
-                  onChange={(event) =>
-                    updateSellerProfileField('stateRegistration', event.target.value)
-                  }
-                  placeholder="IE"
-                />
-              </label>
-            </div>
-
-            <div className="form-grid three">
-              <label>
-                Cidade
-                <input
-                  value={sellerProfileForm.city}
-                  onChange={(event) => updateSellerProfileField('city', event.target.value)}
-                  placeholder="Campo Grande"
-                />
-              </label>
-
-              <label>
-                Estado
-                <input
-                  maxLength={2}
-                  value={sellerProfileForm.state}
-                  onChange={(event) =>
-                    updateSellerProfileField('state', event.target.value.toUpperCase())
-                  }
-                  placeholder="MS"
-                />
-              </label>
-
-              <label>
-                Pais
-                <input
-                  value={sellerProfileForm.country}
-                  onChange={(event) => updateSellerProfileField('country', event.target.value)}
-                  placeholder="BR"
-                />
-              </label>
-            </div>
-
-            {error && <p className="form-error">{error}</p>}
-
-            <button className="primary-action" disabled={isSubmitting} type="submit">
-              {isSubmitting ? 'Salvando...' : 'Salvar e solicitar lote'}
-            </button>
-          </form>
-        </section>
+        <SellerProfilePage
+          error={error}
+          form={sellerProfileForm}
+          isSubmitting={isSubmitting}
+          onFieldChange={updateSellerProfileField}
+          onSubmit={handleSellerProfileSubmit}
+        />
       ) : view === 'sales' ? (
-        <section className="sales-page">
-          <button className="text-action" type="button" onClick={() => setView('home')}>
-            Voltar aos remates
-          </button>
-
-          <div className="form-header">
-            <span className="eyebrow">Escritório</span>
-            <h1>Vendas / Arremates</h1>
-            <p>
-              Compradores vencedores de cada lote, com os contatos para combinar
-              o transporte e a logística.
-            </p>
-          </div>
-
-          {isLoadingSales ? (
-            <p className="loading-message">Carregando vendas...</p>
-          ) : auctionHouseSales.length === 0 ? (
-            <p className="loading-message">Nenhuma venda registrada ainda.</p>
-          ) : (
-            <div className="sales-list">
-              {auctionHouseSales.map((sale) => (
-                <article className="sale-card" key={sale.id}>
-                  <div className="sale-card-head">
-                    <strong>
-                      {sale.lot?.code} · {sale.lot?.title}
-                    </strong>
-                    <span className="sale-price">{formatCurrency(sale.finalPrice)}</span>
-                  </div>
-                  {sale.lot?.auction?.title && (
-                    <span className="loading-message compact">
-                      Remate: {sale.lot.auction.title}
-                    </span>
-                  )}
-                  <dl className="winner-buyer-contact">
-                    <div>
-                      <dt>Comprador</dt>
-                      <dd>{sale.buyer?.name ?? 'Comprador'}</dd>
-                    </div>
-                    {sale.buyer?.email && (
-                      <div>
-                        <dt>E-mail</dt>
-                        <dd>{sale.buyer.email}</dd>
-                      </div>
-                    )}
-                    {sale.buyer?.phone && (
-                      <div>
-                        <dt>Telefone</dt>
-                        <dd>{sale.buyer.phone}</dd>
-                      </div>
-                    )}
-                    {sale.buyer?.document && (
-                      <div>
-                        <dt>Documento</dt>
-                        <dd>{sale.buyer.document}</dd>
-                      </div>
-                    )}
-                  </dl>
-                  <small className="sale-date">
-                    Arrematado em {new Date(sale.soldAt).toLocaleString('pt-BR')}
-                  </small>
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
+        <SalesPage
+          error={salesError}
+          isLoading={isLoadingSales}
+          sales={auctionHouseSales}
+          onBack={() => setView('home')}
+          onRetry={() => void loadAuctionHouseSales()}
+        />
       ) : view === 'myWins' ? (
-        <section className="sales-page">
-          <button className="text-action" type="button" onClick={() => setView('home')}>
-            Voltar aos remates
-          </button>
-
-          <div className="form-header">
-            <span className="eyebrow">Comprador</span>
-            <h1>Meus arremates</h1>
-            <p>Lotes que você arrematou. O escritório entra em contato para a logística.</p>
-          </div>
-
-          {isLoadingMyWins ? (
-            <p className="loading-message">Carregando arremates...</p>
-          ) : myWins.length === 0 ? (
-            <p className="loading-message">Você ainda não arrematou nenhum lote.</p>
-          ) : (
-            <div className="sales-list">
-              {myWins.map((sale) => (
-                <article className="sale-card" key={sale.id}>
-                  <div className="sale-card-head">
-                    <strong>
-                      {sale.lot?.code} · {sale.lot?.title}
-                    </strong>
-                    <span className="sale-price">{formatCurrency(sale.finalPrice)}</span>
-                  </div>
-                  {sale.lot?.auction?.title && (
-                    <span className="loading-message compact">
-                      Remate: {sale.lot.auction.title}
-                    </span>
-                  )}
-                  {sale.saleRecordedByAuctionHouse && (
-                    <dl className="winner-buyer-contact">
-                      <div>
-                        <dt>Escritório</dt>
-                        <dd>{sale.saleRecordedByAuctionHouse.name}</dd>
-                      </div>
-                      {sale.saleRecordedByAuctionHouse.email && (
-                        <div>
-                          <dt>Contato</dt>
-                          <dd>{sale.saleRecordedByAuctionHouse.email}</dd>
-                        </div>
-                      )}
-                    </dl>
-                  )}
-                  <small className="sale-date">
-                    Arrematado em {new Date(sale.soldAt).toLocaleString('pt-BR')}
-                  </small>
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
+        <MyWinsPage
+          error={myWinsError}
+          isLoading={isLoadingMyWins}
+          sales={myWins}
+          onBack={() => setView('home')}
+          onRetry={() => void loadMyWins()}
+        />
       ) : view === 'registerLot' ? (
-        <section className="register-page">
-          <div className="register-copy">
-            <span className="eyebrow">
-              {currentAuctionHouse ? 'Lote do remate' : 'Solicitacao de lote'}
-            </span>
-            <h1>
-              {currentAuctionHouse
-                ? 'Adicione lotes aos remates do escritorio.'
-                : 'Associe o lote a um remate antes de enviar.'}
-            </h1>
-            <p>
-              {currentAuctionHouse
-                ? 'Escolha um remate criado pelo escritorio e cadastre os lotes que farao parte da oferta.'
-                : 'O lote nao entra direto na vitrine. Ele fica em analise e precisa ser aprovado pelo escritorio responsavel pelo remate.'}
-            </p>
-
-            <div className="market-panel">
-              <div className="market-image" aria-hidden="true">
-                <span className="live-dot"></span>
-                <strong>Em analise</strong>
-              </div>
-              <div>
-                <strong>Regra de publicacao</strong>
-                <span>Lote sempre vinculado a um remate e enviado para aprovacao.</span>
-              </div>
-            </div>
-          </div>
-
-          <form className="lot-form" onSubmit={handleLotSubmit}>
-            <div className="form-header">
-              <h2>{currentAuctionHouse ? 'Adicionar lote' : 'Novo lote'}</h2>
-            </div>
-
-            {selectableAuctions.length === 0 ? (
-              <p className="form-error">
-                {currentAuctionHouse
-                  ? 'Crie um remate antes de adicionar lotes.'
-                  : 'Nenhum remate disponivel para associar. Selecione um remate antes de solicitar um lote.'}
-              </p>
-            ) : (
-              <label>
-                Remate
-                <select
-                  required
-                  value={selectedLotAuctionId}
-                  onChange={(event) => updateLotField('auctionId', event.target.value)}
-                >
-                  {selectableAuctions.map((auction) => (
-                    <option key={auction.id} value={auction.id}>
-                      {auction.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-
-            <label>
-              Codigo do lote
-              <input
-                required
-                value={lotForm.code}
-                onChange={(event) => updateLotField('code', event.target.value)}
-                placeholder="LOTE-001"
-              />
-            </label>
-
-            <label>
-              Titulo
-              <input
-                required
-                value={lotForm.title}
-                onChange={(event) => updateLotField('title', event.target.value)}
-                placeholder="Nelore PO - lote jovem"
-              />
-            </label>
-
-            <div className="form-grid">
-              <label>
-                Raca
-                <input
-                  value={lotForm.breed}
-                  onChange={(event) => updateLotField('breed', event.target.value)}
-                  placeholder="Nelore"
-                />
-              </label>
-
-              <label>
-                Categoria
-                <input
-                  value={lotForm.category}
-                  onChange={(event) => updateLotField('category', event.target.value)}
-                  placeholder="Corte"
-                />
-              </label>
-            </div>
-
-            <div className="form-grid three">
-              <label>
-                Quantidade
-                <input
-                  min="1"
-                  type="number"
-                  value={lotForm.quantity}
-                  onChange={(event) => updateLotField('quantity', event.target.value)}
-                />
-              </label>
-
-              <label>
-                Peso kg
-                <input
-                  min="0"
-                  type="number"
-                  value={lotForm.weightKg}
-                  onChange={(event) => updateLotField('weightKg', event.target.value)}
-                  placeholder="420"
-                />
-              </label>
-
-              <label>
-                Idade meses
-                <input
-                  min="0"
-                  type="number"
-                  value={lotForm.ageMonths}
-                  onChange={(event) => updateLotField('ageMonths', event.target.value)}
-                  placeholder="24"
-                />
-              </label>
-            </div>
-
-            <div className="form-grid">
-              <label>
-                Sexo
-                <select
-                  value={lotForm.sex}
-                  onChange={(event) => updateLotField('sex', event.target.value)}
-                >
-                  <option value="">Nao informado</option>
-                  <option value="Macho">Macho</option>
-                  <option value="Femea">Femea</option>
-                  <option value="Misto">Misto</option>
-                </select>
-              </label>
-
-              <label>
-                Valor inicial
-                <input
-                  min="0"
-                  type="number"
-                  value={lotForm.initialPrice}
-                  onChange={(event) => updateLotField('initialPrice', event.target.value)}
-                  placeholder="15000"
-                />
-              </label>
-            </div>
-
-            <label>
-              Descricao
-              <textarea
-                value={lotForm.description}
-                onChange={(event) => updateLotField('description', event.target.value)}
-                placeholder="Lote com animais jovens, bom padrao racial e documentacao em dia."
-              />
-            </label>
-
-            {renderLotImageInput()}
-
-            {error && <p className="form-error">{error}</p>}
-
-            <button
-              className="primary-action"
-              disabled={isSubmitting || selectableAuctions.length === 0}
-              type="submit"
-            >
-              {getLotSubmitLabel(isSubmitting, currentAuctionHouse)}
-            </button>
-          </form>
-        </section>
+        <RegisterLotPage
+          auctions={selectableAuctions}
+          error={error}
+          isAuctionHouse={Boolean(currentAuctionHouse)}
+          isSubmitting={isSubmitting}
+          lotForm={lotForm}
+          lotImages={lotImages}
+          selectedAuctionId={selectedLotAuctionId}
+          onFieldChange={updateLotField}
+          onImagesChange={handleLotImageChange}
+          onRemoveImage={removeLotImage}
+          onSubmit={handleLotSubmit}
+        />
       ) : (
-        <section className="mx-auto grid w-full max-w-7xl gap-8 px-5 py-10 sm:px-8 lg:py-12">
-          <div className="relative overflow-hidden rounded-[28px] border border-primary/10 bg-card/95 p-6 shadow-[0_24px_80px_rgba(15,23,42,0.09)] sm:p-8">
-            <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_18%_20%,rgba(18,98,70,0.12),transparent_36%),linear-gradient(135deg,rgba(255,255,255,0.70),rgba(231,242,236,0.52))]" />
-            <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-              <div className="max-w-3xl">
-                <span className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary/8 px-3 py-1 text-xs font-black uppercase tracking-[0.16em] text-primary">
-                  <Radio className="size-3.5" />
-                  REMATES
-                </span>
-                <h1 className="mt-4 text-4xl font-black tracking-tight text-foreground sm:text-5xl">
-                  Remates disponíveis
-                </h1>
-                <p className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
-                  Acompanhe transmissões ao vivo, consulte os próximos eventos e
-                  acesse os lotes disponíveis em cada escritório leiloeiro.
-                </p>
-              </div>
-
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                {canCompleteSellerProfile && (
-                  <Button
-                    variant="secondary"
-                    className="rounded-full font-black"
-                    type="button"
-                    onClick={() => setView('sellerProfile')}
-                  >
-                    <Sprout className="size-4" />
-                    Cadastro de produtor
-                  </Button>
-                )}
-                {currentAuctionHouse ? (
-                  <Button
-                    className="rounded-full bg-primary px-5 font-black text-primary-foreground shadow-[0_14px_34px_rgba(18,98,70,0.22)] hover:bg-primary/90"
-                    type="button"
-                    onClick={() => setView('createAuction')}
-                  >
-                    <Plus className="size-4" />
-                    Criar remate
-                  </Button>
-                ) : null}
-              </div>
-            </div>
-
-            <Separator className="my-6 bg-border/80" />
-
-            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-              <div className="flex items-center gap-3 text-sm font-bold text-muted-foreground">
-                <span className="grid size-10 place-items-center rounded-full bg-secondary text-primary">
-                  <Search className="size-4" />
-                </span>
-                <span>
-                  {visibleAuctions.length}{' '}
-                  {visibleAuctions.length === 1 ? 'remate encontrado' : 'remates encontrados'}
-                </span>
-              </div>
-
-              <div className="hidden md:block">
-                <Select
-                  value={auctionStatusFilter}
-                  onValueChange={(value) =>
-                    setAuctionStatusFilter(value as AuctionStatusFilter)
-                  }
-                >
-                  <SelectTrigger className="h-11 w-56 rounded-full border-primary/15 bg-white font-bold shadow-sm">
-                    <SelectValue placeholder="Filtrar remates" />
-                  </SelectTrigger>
-                  <SelectContent className="rounded-2xl border-primary/10 bg-popover/95 p-1 shadow-[0_24px_70px_rgba(15,23,42,0.16)] backdrop-blur-xl">
-                    <SelectItem value="ALL">Todos os remates</SelectItem>
-                    <SelectItem value="LIVE">Ao vivo</SelectItem>
-                    <SelectItem value="SCHEDULED">Agendados</SelectItem>
-                    <SelectItem value="FINISHED">Finalizados</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <Sheet>
-                <SheetTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className="rounded-full border-primary/15 bg-white/70 font-black shadow-sm backdrop-blur md:hidden"
-                    type="button"
-                  >
-                    <Search className="size-4" />
-                    Filtrar
-                  </Button>
-                </SheetTrigger>
-                <SheetContent
-                  side="bottom"
-                  className="rounded-t-[24px] border-primary/10 bg-popover/95 p-6 shadow-[0_-24px_70px_rgba(15,23,42,0.16)] backdrop-blur-xl"
-                >
-                  <SheetHeader>
-                    <SheetTitle className="text-xl font-black text-foreground">
-                      Filtrar remates
-                    </SheetTitle>
-                    <SheetDescription className="font-medium text-muted-foreground">
-                      Escolha o status dos eventos exibidos na listagem.
-                    </SheetDescription>
-                  </SheetHeader>
-                  <div className="mt-5">
-                    <Select
-                      value={auctionStatusFilter}
-                      onValueChange={(value) =>
-                        setAuctionStatusFilter(value as AuctionStatusFilter)
-                      }
-                    >
-                      <SelectTrigger className="h-12 rounded-xl border-primary/15 bg-white/75 font-bold">
-                        <SelectValue placeholder="Filtrar remates" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="ALL">Todos os remates</SelectItem>
-                        <SelectItem value="LIVE">Ao vivo</SelectItem>
-                        <SelectItem value="SCHEDULED">Agendados</SelectItem>
-                        <SelectItem value="FINISHED">Finalizados</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </SheetContent>
-              </Sheet>
-            </div>
-          </div>
-
-          {createdUserName && (
-            <p className="success-message">Bem-vindo, {createdUserName}.</p>
+        <HomePage
+          auctions={visibleAuctions}
+          filteredAuctions={filteredVisibleAuctions}
+          auctionStatusFilter={auctionStatusFilter}
+          isLoading={isLoadingAuctions}
+          error={error}
+          createdUserName={createdUserName}
+          createdLotId={createdLotId}
+          createdAuctionId={createdAuctionId}
+          isAuctionHouse={Boolean(currentAuctionHouse)}
+          isSeller={Boolean(currentUser?.sellerProfile)}
+          canCompleteSellerProfile={canCompleteSellerProfile}
+          canRegisterLot={Boolean(
+            selectableAuctions.length > 0 &&
+              (currentAuctionHouse || currentUser?.sellerProfile),
           )}
-          {createdLotId && (
-            <p className="success-message">
-              {currentAuctionHouse
-                ? 'Lote adicionado ao remate.'
-                : 'Lote enviado para aprovacao do escritorio.'}
-            </p>
-          )}
-          {createdAuctionId && (
-            <p className="success-message">Remate criado e pronto para receber lotes.</p>
-          )}
+          getAuctionLotCount={getAuctionLotCount}
+          isOwnAuction={isAuctionOwnedByCurrentOffice}
+          onFilterChange={setAuctionStatusFilter}
+          onEnterAuction={enterAuctionRoom}
+          onCreateAuction={() => setView('createAuction')}
+          onRegisterLot={() => setView('registerLot')}
+          onCompleteSellerProfile={() => setView('sellerProfile')}
+        />
 
-          {isLoadingAuctions ? (
-            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-              {Array.from({ length: 3 }).map((_, index) => (
-                <AuctionCardSkeleton key={index} />
-              ))}
-            </div>
-          ) : filteredVisibleAuctions.length === 0 ? (
-            <div className="rounded-[22px] border border-dashed border-primary/20 bg-card/65 p-10 text-center shadow-[0_18px_55px_rgba(15,23,42,0.07)] backdrop-blur">
-              <CalendarDays className="mx-auto mb-4 size-10 text-primary" />
-              <h2 className="text-2xl font-black text-foreground">
-                Nenhum remate disponível no momento.
-              </h2>
-              <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
-                Quando novos eventos forem publicados, eles aparecerão aqui com a
-                imagem de capa, status da transmissão e informações dos lotes.
-              </p>
-            </div>
-          ) : (
-            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-              {filteredVisibleAuctions.map((auction, index) => {
-                const auctionLotCount = getAuctionLotCount(auction);
-                const isOwnAuction = isAuctionOwnedByCurrentOffice(auction);
-
-                return (
-                  <AuctionCard
-                    key={auction.id}
-                    auction={auction}
-                    lotCount={auctionLotCount}
-                    isOwnAuction={Boolean(currentAuctionHouse && isOwnAuction)}
-                    isHighlighted={auction.id === createdAuctionId}
-                    onEnter={enterAuctionRoom}
-                    index={index}
-                  />
-                );
-              })}
-            </div>
-          )}
-        </section>
       )}
     </main>
   );

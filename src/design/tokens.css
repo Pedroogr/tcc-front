@@ -1,0 +1,53 @@
+/* Fundacao de cor do tema escuro.
+   Os nomes seguem o contrato do shadcn — src/components/ui/ depende deles.
+   Verificado por scripts/check-tokens.mjs. */
+:root {
+  --background: #0b120f;
+  --foreground: #e9efeb;
+  --card: #121b17;
+  --card-foreground: #e9efeb;
+  --popover: #18231e;
+  --popover-foreground: #e9efeb;
+  --primary: #3fa47b;
+  --primary-foreground: #07110c;
+  --secondary: #18231e;
+  --secondary-foreground: #e9efeb;
+  --muted: #18231e;
+  --muted-foreground: #9daaa3;
+  --accent: #18231e;
+  --accent-foreground: #e9efeb;
+  --destructive: #f0483b;
+  --border: #24312b;
+  --input: #33423a;
+  --ring: #3fa47b;
+  --live: #f0483b;
+  --scheduled: #d8b673;
+
+  /* Fora do contrato shadcn */
+  --price: #d07e4f;
+  --success: #4fb683;
+  --text-subtle: #84918a;
+  --brand-tint: #14281f;
+  --brand-line: #2a4a39;
+  --placeholder: #7c8b83;
+
+  --radius: 12px;
+
+  --font-display: 'Archivo Variable', 'Helvetica Neue', Arial, sans-serif;
+  --font-sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  /* PONTE TRANSITORIA — remover junto com src/App.css.
+     App.css tem 85 referencias a estas variaveis do tema claro. Sem os
+     aliases, as telas ainda nao migradas ficam sem cor nenhuma.
+     Cada tela migrada apaga suas regras; quando App.css chegar a zero,
+     este bloco sai junto. Nao usar em codigo novo. */
+  --brand: var(--primary);
+  --brand-dark: var(--primary);
+  --brand-soft: #6fc79e;
+  --brand-tint-legacy: var(--brand-tint);
+  --shadow: 0 16px 40px rgb(0 0 0 / 0.45);
+  --text-muted: var(--muted-foreground);
+  --text-strong: var(--foreground);
+  --bg: var(--background);
+}
