@@ -30,6 +30,9 @@ const PAIRS = [
   ['destructive', 'background'],
   ['placeholder', 'muted'],
   ['placeholder', 'background'],
+  // Texto sobre o vermelho de AO VIVO. Branco aqui rende 3.69 e reprova;
+  // o quase-preto de primary-foreground rende 5.20.
+  ['primary-foreground', 'live'],
 ];
 
 const MIN_RATIO = 4.5;
