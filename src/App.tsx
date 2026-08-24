@@ -23,28 +23,15 @@ import { listAuctionHouseSales, listMyWins } from './api/salesApi';
 import { createNotificationSocket } from './api/socket';
 import { upsertSellerProfile } from './api/usersApi';
 import { AccountMenu } from './components/AccountMenu';
-import { AuctionCard, AuctionCardSkeleton } from './components/AuctionCard';
 import { AuctionBroadcastControls } from './components/AuctionBroadcastControls';
 import { DeclareWinnerPanel } from './components/DeclareWinnerPanel';
 import { AuctionStreamPlayer } from './components/AuctionStreamPlayer';
+import { AuthPage } from './pages/AuthPage';
+import { HomePage } from './pages/HomePage';
+import { AccountDetailsPage } from './pages/AccountDetailsPage';
+import { OfficeInvitePage } from './pages/OfficeInvitePage';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
-import { Separator } from './components/ui/separator';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from './components/ui/select';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from './components/ui/sheet';
 import type { Auction, AuctionStreamState } from './types/auction';
 import type { CreateAuctionPayload } from './types/auction';
 import type { CreateLotPayload, Lot, LotImagePayload } from './types/lot';
@@ -75,15 +62,7 @@ import {
   formatLotStatus,
   formatRegistrationStatus,
 } from './utils/auctionLabels';
-import {
-  CalendarDays,
-  ChevronDown,
-  ChevronUp,
-  Plus,
-  Radio,
-  Search,
-  Sprout,
-} from 'lucide-react';
+import { ChevronDown, ChevronUp, Plus, Radio } from 'lucide-react';
 
 const emptyLotForm = {
   code: '',
@@ -196,7 +175,7 @@ function getAuctionDisplayStatus(auction: Auction) {
   }
 
   if (auction.stream?.status === 'ENDED') {
-    return 'STREAM_ENDED';
+    return 'FINISHED';
   }
 
   if (auction.stream?.status === 'ERROR') {
@@ -285,16 +264,6 @@ function persistAuctionHouseAuth(accessToken: string, auctionHouse: AuctionHouse
   localStorage.setItem(authStorage.actorTypeKey, 'AUCTION_HOUSE');
   localStorage.setItem(authStorage.auctionHouseKey, JSON.stringify(auctionHouse));
   localStorage.removeItem(authStorage.userKey);
-}
-
-function getAuthSubmitLabel(isSubmitting: boolean, authMode: AuthMode) {
-  if (isSubmitting) {
-    return 'Processando...';
-  }
-  if (authMode === 'register') {
-    return 'Criar conta e entrar';
-  }
-  return 'Entrar';
 }
 
 function getLotStageMessage(status: string, consignmentId?: string | null) {
@@ -683,28 +652,43 @@ function App() {
       return;
     }
 
-    void loadBuyerRegistrations();
+    let isCanceled = false;
+    queueMicrotask(() => {
+      if (!isCanceled) {
+        void loadBuyerRegistrations();
+      }
+    });
     const interval = setInterval(() => {
       void loadBuyerRegistrations();
     }, 5000);
 
-    return () => clearInterval(interval);
+    return () => {
+      isCanceled = true;
+      clearInterval(interval);
+    };
   }, [view, canManageSelectedAuction, loadBuyerRegistrations]);
 
   // Comprador: a liberacao e por escritorio (vale para todos os remates dele),
   // entao buscamos ao entrar na sala e mantemos atualizado por polling.
   useEffect(() => {
+    let isCanceled = false;
+
     if (
       view !== 'auctionRoom' ||
       !currentUser ||
       currentAuctionHouse ||
       !selectedAuctionHouseId
     ) {
-      setMyRegistration(undefined);
-      return;
+      queueMicrotask(() => {
+        if (!isCanceled) {
+          setMyRegistration(undefined);
+        }
+      });
+      return () => {
+        isCanceled = true;
+      };
     }
 
-    let isCanceled = false;
     const auctionHouseId = selectedAuctionHouseId;
 
     const fetchRegistration = () => {
@@ -732,7 +716,7 @@ function App() {
 
   // Mantem os lances do lote em pista atualizados para todos na sala.
   useEffect(() => {
-    if (view !== 'auctionRoom' || !inPistaLot) {
+    if (view !== 'auctionRoom' || !inPistaLot?.id) {
       return;
     }
 
@@ -755,7 +739,19 @@ function App() {
       ? Number(winning.amount) + PLATFORM_BID_INCREMENT
       : Number(inPistaLot.initialPrice ?? 0);
 
-    setBidAmount(String(suggested));
+    let isCanceled = false;
+    queueMicrotask(() => {
+      if (!isCanceled) {
+        setBidAmount(String(suggested));
+      }
+    });
+
+    return () => {
+      isCanceled = true;
+    };
+    // O valor digitado nao pode ser sobrescrito a cada refresh do mesmo lote.
+    // A sugestao so deve mudar quando a identidade do lote em pista mudar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inPistaLot?.id]);
 
   useEffect(() => {
@@ -1371,99 +1367,9 @@ function App() {
     setView('accountDetails');
   }
 
-  function renderAccountDetails() {
-    if (currentAuctionHouse) {
-      const accountRows = [
-        ['Nome', currentAuctionHouse.name],
-        ['CNPJ/documento', currentAuctionHouse.document || '-'],
-        ['E-mail', currentAuctionHouse.email],
-        ['Telefone', currentAuctionHouse.phone || '-'],
-        ['Cidade', currentAuctionHouse.city || '-'],
-        ['Estado', currentAuctionHouse.state || '-'],
-        ['País', currentAuctionHouse.country || '-'],
-        ['Status da conta', currentAuctionHouse.status],
-      ];
-
-      return (
-        <section className="account-page">
-          <button className="text-action" type="button" onClick={() => setView('home')}>
-            Voltar aos remates
-          </button>
-          <div className="account-details-shell">
-            <div className="account-details-hero">
-              <span className="eyebrow">Dados do escritório</span>
-              <h1>{currentAuctionHouse.name}</h1>
-              <p>Informações públicas e operacionais da conta autenticada.</p>
-            </div>
-            <div className="account-details-card">
-              <div className="account-logo-preview">
-                {currentAuctionHouse.logoUrl ? (
-                  <img alt="" src={resolveMediaUrl(currentAuctionHouse.logoUrl)} />
-                ) : (
-                  <span>{currentAuctionHouse.name.slice(0, 2).toUpperCase()}</span>
-                )}
-              </div>
-              <dl className="account-data-grid">
-                {accountRows.map(([label, value]) => (
-                  <div key={label}>
-                    <dt>{label}</dt>
-                    <dd>{value}</dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-          </div>
-          {error && <p className="form-error">{error}</p>}
-        </section>
-      );
-    }
-
-    const producerStatus = currentUser?.sellerProfile
-      ? currentUser.sellerProfile.verificationStatus || 'Cadastrado'
-      : 'Não cadastrado';
-    const accountRows = [
-      ['Nome', currentUser?.name || '-'],
-      ['CPF/documento', currentUser?.document || '-'],
-      ['E-mail', currentUser?.email || '-'],
-      ['Telefone', currentUser?.phone || '-'],
-      ['Status da conta', currentUser?.status || '-'],
-      ['Status do cadastro de produtor', producerStatus],
-    ];
-
-    return (
-      <section className="account-page">
-        <button className="text-action" type="button" onClick={() => setView('home')}>
-          Voltar aos remates
-        </button>
-        <div className="account-details-shell">
-          <div className="account-details-hero">
-            <span className="eyebrow">Meus dados</span>
-            <h1>{currentUser?.name || 'Minha conta'}</h1>
-            <p>Informações da conta autenticada e situação do cadastro de produtor.</p>
-          </div>
-          <div className="account-details-card">
-            <div className="account-logo-preview">
-              <span>{(currentUser?.name || 'CA').slice(0, 2).toUpperCase()}</span>
-            </div>
-            <dl className="account-data-grid">
-              {accountRows.map(([label, value]) => (
-                <div key={label}>
-                  <dt>{label}</dt>
-                  <dd>{value}</dd>
-                </div>
-              ))}
-            </dl>
-          </div>
-        </div>
-        {error && <p className="form-error">{error}</p>}
-      </section>
-    );
-  }
-
   const canCompleteSellerProfile = Boolean(
     currentUser && !currentUser.buyerProfile && !currentUser.sellerProfile,
   );
-  const isRegisterMode = authMode === 'register';
   const selectedLotAuctionId = selectableAuctions.some(
     (auction) => auction.id === lotForm.auctionId,
   )
@@ -1472,436 +1378,65 @@ function App() {
 
   if (officeInviteToken) {
     return (
-      <main className="app-shell auth-shell">
-        <section className="register-page user-register-page">
-          <div className="register-copy">
-            <span className="brand-inline">
-              <span className="brand-mark">CA</span>
-              Cattle Auction
-            </span>
-            <span className="eyebrow">Convite de escritorio</span>
-            <h1>Cadastro do escritorio</h1>
-            <p>
-              Este cadastro e liberado apenas pelo link de convite enviado pela
-              plataforma.
-            </p>
-          </div>
-
-          <form className="lot-form user-form" onSubmit={handleAuctionHouseInviteSubmit}>
-            <div className="form-header">
-              <h2>Dados do escritorio</h2>
-            </div>
-
-            {isValidatingOfficeInvite || officeInviteStatus === 'idle' ? (
-              <p className="loading-message">Validando convite...</p>
-            ) : officeInviteStatus === 'invalid' ? (
-              <p className="form-error">
-                Link invalido, expirado ou ja utilizado. Solicite um novo convite.
-              </p>
-            ) : (
-              <>
-                <label>
-                  Nome do escritorio
-                  <input
-                    required
-                    value={auctionHouseInviteForm.name}
-                    onChange={(event) =>
-                      updateAuctionHouseInviteField('name', event.target.value)
-                    }
-                    placeholder="Leiloes Campo Alto"
-                  />
-                </label>
-
-                <div className="form-grid">
-                  <label>
-                    E-mail
-                    <input
-                      required
-                      readOnly={isOfficeInviteEmailLocked}
-                      type="email"
-                      value={auctionHouseInviteForm.email}
-                      onChange={(event) =>
-                        updateAuctionHouseInviteField('email', event.target.value)
-                      }
-                      placeholder="escritorio@email.com"
-                    />
-                  </label>
-
-                  <label>
-                    Senha
-                    <input
-                      required
-                      minLength={6}
-                      type="password"
-                      value={auctionHouseInviteForm.password}
-                      onChange={(event) =>
-                        updateAuctionHouseInviteField('password', event.target.value)
-                      }
-                      placeholder="Mínimo 6 caracteres"
-                    />
-                  </label>
-                </div>
-
-                <div className="form-grid">
-                  <label>
-                    CNPJ
-                    <input
-                      inputMode="numeric"
-                      maxLength={18}
-                      value={auctionHouseInviteForm.document}
-                      onChange={(event) =>
-                        updateAuctionHouseInviteDocument(event.target.value)
-                      }
-                      placeholder="00.000.000/0000-00"
-                    />
-                    {showDevDocumentTools && (
-                      <button
-                        className="inline-helper-action"
-                        type="button"
-                        onClick={fillDevAuctionHouseCnpj}
-                      >
-                        Gerar CNPJ de teste
-                      </button>
-                    )}
-                  </label>
-
-                  <label>
-                    Telefone
-                    <input
-                      inputMode="numeric"
-                      maxLength={15}
-                      value={auctionHouseInviteForm.phone}
-                      onChange={(event) =>
-                        updateAuctionHouseInvitePhone(event.target.value)
-                      }
-                      placeholder="(00) 00000-0000"
-                    />
-                  </label>
-                </div>
-
-                <div className="form-grid three">
-                  <label>
-                    Cidade
-                    <input
-                      value={auctionHouseInviteForm.city}
-                      onChange={(event) =>
-                        updateAuctionHouseInviteField('city', event.target.value)
-                      }
-                      placeholder="Campo Grande"
-                    />
-                  </label>
-
-                  <label>
-                    Estado
-                    <input
-                      maxLength={2}
-                      value={auctionHouseInviteForm.state}
-                      onChange={(event) =>
-                        updateAuctionHouseInviteField(
-                          'state',
-                          event.target.value.toUpperCase(),
-                        )
-                      }
-                      placeholder="MS"
-                    />
-                  </label>
-
-                  <label>
-                    Pais
-                    <input
-                      value={auctionHouseInviteForm.country}
-                      onChange={(event) =>
-                        updateAuctionHouseInviteField('country', event.target.value)
-                      }
-                      placeholder="BR"
-                    />
-                  </label>
-                </div>
-
-                {error && <p className="form-error">{error}</p>}
-
-                <button
-                  className="primary-action"
-                  disabled={isSubmitting || officeInviteStatus !== 'valid'}
-                  type="submit"
-                >
-                  {isSubmitting ? 'Criando escritorio...' : 'Criar conta do escritorio'}
-                </button>
-              </>
-            )}
-          </form>
-        </section>
-      </main>
+      <OfficeInvitePage
+        form={auctionHouseInviteForm}
+        status={officeInviteStatus}
+        isValidating={isValidatingOfficeInvite}
+        isEmailLocked={isOfficeInviteEmailLocked}
+        showDevDocumentTools={showDevDocumentTools}
+        isSubmitting={isSubmitting}
+        error={error}
+        onSubmit={handleAuctionHouseInviteSubmit}
+        onFieldChange={updateAuctionHouseInviteField}
+        onDocumentChange={updateAuctionHouseInviteDocument}
+        onPhoneChange={updateAuctionHouseInvitePhone}
+        onFillDevDocument={fillDevAuctionHouseCnpj}
+      />
     );
   }
 
   if (!isAuthenticated) {
     return (
-      <main className="app-shell auth-shell">
-        <section className="register-page user-register-page">
-          <div className="register-copy">
-            <span className="brand-inline">
-              <span className="brand-mark">CA</span>
-              Cattle Auction
-            </span>
-            <span className="eyebrow">Acesso da plataforma</span>
-            <h1>Acesso aos remates</h1>
-            <p>
-              Entre com seu e-mail e senha. O sistema identifica automaticamente
-              contas de usuários e escritórios.
-            </p>
-          </div>
-
-          <form
-            className="lot-form user-form"
-            onSubmit={isRegisterMode ? handleUserSubmit : handleLoginSubmit}
-          >
-            <div className="auth-tabs" role="tablist" aria-label="Acesso">
-              <button
-                className={authMode === 'login' ? 'selected' : ''}
-                type="button"
-                onClick={() => {
-                  setAuthMode('login');
-                  setError('');
-                }}
-              >
-                Login
-              </button>
-              <button
-                className={authMode === 'register' ? 'selected' : ''}
-                type="button"
-                onClick={() => {
-                  setAuthMode('register');
-                  setError('');
-                }}
-              >
-                Cadastro
-              </button>
-            </div>
-
-            <div className="form-header">
-              <h2>
-                {authMode === 'register'
-                  ? 'Cadastro de usuário'
-                  : 'Entrar na conta'}
-              </h2>
-            </div>
-
-            {authMode === 'register' && (
-              <label>
-                Nome completo
-                <input
-                  required
-                  value={userForm.name}
-                  onChange={(event) => updateUserField('name', event.target.value)}
-                  placeholder="Pedro Ribeiro"
-                />
-              </label>
-            )}
-
-            {authMode === 'register' && (
-              <div className="account-type-group" aria-label="Tipo de cadastro">
-                <button
-                  className={accountType === 'BUYER' ? 'selected' : ''}
-                  type="button"
-                  onClick={() => setAccountType('BUYER')}
-                >
-                  Comprador
-                </button>
-                <button
-                  className={accountType === 'SELLER' ? 'selected' : ''}
-                  type="button"
-                  onClick={() => setAccountType('SELLER')}
-                >
-                  Vendedor
-                </button>
-              </div>
-            )}
-
-            <div className="form-grid">
-              <label>
-                E-mail
-                <input
-                  required
-                  type="email"
-                  value={userForm.email}
-                  onChange={(event) => updateUserField('email', event.target.value)}
-                  placeholder="pedro@email.com"
-                />
-              </label>
-
-              <label>
-                Senha
-                <input
-                  required
-                  minLength={6}
-                  type="password"
-                  value={userForm.password}
-                  onChange={(event) => updateUserField('password', event.target.value)}
-                  placeholder="Mínimo 6 caracteres"
-                />
-              </label>
-            </div>
-
-            {authMode === 'register' && (
-              <>
-                <div className="form-grid">
-                  <label>
-                    Telefone
-                    <input
-                      inputMode="numeric"
-                      maxLength={15}
-                      value={userForm.phone}
-                      onChange={(event) => updateUserPhone(event.target.value)}
-                      placeholder="(00) 00000-0000"
-                    />
-                  </label>
-
-                  <label>
-                    Documento
-                    <input
-                      inputMode="numeric"
-                      maxLength={18}
-                      value={userForm.document}
-                      onChange={(event) => updateUserDocument(event.target.value)}
-                      placeholder="CPF ou CNPJ"
-                    />
-                    {showDevDocumentTools && (
-                      <button
-                        className="inline-helper-action"
-                        type="button"
-                        onClick={fillDevUserCpf}
-                      >
-                        Gerar CPF de teste
-                      </button>
-                    )}
-                  </label>
-                </div>
-
-                {accountType === 'SELLER' && (
-                  <div className="seller-inline-fields">
-                    <div className="form-header compact">
-                      <h2>Dados do vendedor</h2>
-                    </div>
-
-                    <label>
-                      Nome da fazenda
-                      <input
-                        value={sellerProfileForm.farmName}
-                        onChange={(event) =>
-                          updateSellerProfileField('farmName', event.target.value)
-                        }
-                        placeholder="Fazenda Santa Maria"
-                      />
-                    </label>
-
-                    <div className="form-grid">
-                      <label>
-                        Inscrição rural
-                        <input
-                          value={sellerProfileForm.ruralRegistration}
-                          onChange={(event) =>
-                            updateSellerProfileField(
-                              'ruralRegistration',
-                              event.target.value,
-                            )
-                          }
-                          placeholder="Registro do produtor"
-                        />
-                      </label>
-
-                      <label>
-                        Inscrição estadual
-                        <input
-                          value={sellerProfileForm.stateRegistration}
-                          onChange={(event) =>
-                            updateSellerProfileField(
-                              'stateRegistration',
-                              event.target.value,
-                            )
-                          }
-                          placeholder="IE"
-                        />
-                      </label>
-                    </div>
-
-                    <div className="form-grid three">
-                      <label>
-                        Cidade
-                        <input
-                          value={sellerProfileForm.city}
-                          onChange={(event) =>
-                            updateSellerProfileField('city', event.target.value)
-                          }
-                          placeholder="Campo Grande"
-                        />
-                      </label>
-
-                      <label>
-                        Estado
-                        <input
-                          maxLength={2}
-                          value={sellerProfileForm.state}
-                          onChange={(event) =>
-                            updateSellerProfileField(
-                              'state',
-                              event.target.value.toUpperCase(),
-                            )
-                          }
-                          placeholder="MS"
-                        />
-                      </label>
-
-                      <label>
-                        País
-                        <input
-                          value={sellerProfileForm.country}
-                          onChange={(event) =>
-                            updateSellerProfileField('country', event.target.value)
-                          }
-                          placeholder="BR"
-                        />
-                      </label>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-
-            {authMode === 'login' && (
-              <p className="helper-message">
-                Escritórios usam as credenciais institucionais criadas pelo sistema.
-              </p>
-            )}
-
-            {error && <p className="form-error">{error}</p>}
-
-            <button className="primary-action" disabled={isSubmitting} type="submit">
-              {getAuthSubmitLabel(isSubmitting, authMode)}
-            </button>
-          </form>
-        </section>
-      </main>
+      <AuthPage
+        authMode={authMode}
+        accountType={accountType}
+        userForm={userForm}
+        sellerProfileForm={sellerProfileForm}
+        isSubmitting={isSubmitting}
+        error={error}
+        showDevDocumentTools={showDevDocumentTools}
+        onSubmit={authMode === 'register' ? handleUserSubmit : handleLoginSubmit}
+        onAuthModeChange={(mode) => {
+          setAuthMode(mode);
+          setError('');
+        }}
+        onAccountTypeChange={setAccountType}
+        onUserFieldChange={updateUserField}
+        onUserPhoneChange={updateUserPhone}
+        onUserDocumentChange={updateUserDocument}
+        onFillDevUserCpf={fillDevUserCpf}
+        onSellerProfileFieldChange={updateSellerProfileField}
+      />
     );
   }
 
   return (
     <main className="app-shell">
-      <header className="sticky top-0 z-40 border-b border-border/70 bg-background shadow-[0_6px_20px_rgba(15,23,42,0.05)]">
-        <div className="mx-auto flex min-h-20 w-full max-w-7xl items-center justify-between gap-4 px-5 py-3 sm:px-8">
+      <header className="sticky top-0 z-40 border-b border-border bg-card/95 backdrop-blur-lg">
+        <div className="mx-auto flex min-h-15 w-full max-w-[1360px] items-center justify-between gap-3 px-4 py-2 sm:px-6 lg:px-8">
           <button
-            className="flex min-w-0 items-center gap-3 rounded-full text-left transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            className="flex min-w-0 items-center gap-3 rounded-md text-left transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             type="button"
             onClick={() => setView('home')}
           >
-            <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary text-sm font-black text-primary-foreground shadow-[0_14px_32px_rgba(18,98,70,0.22)]">
+            <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-brand-line bg-brand-tint text-xs font-semibold text-primary">
               CA
             </span>
             <span className="hidden min-w-0 sm:grid">
-              <strong className="text-base font-black leading-tight text-foreground">
+              <strong className="text-sm font-semibold leading-tight text-foreground">
                 Cattle Auction
               </strong>
-              <small className="truncate text-xs font-bold text-muted-foreground">
+              <small className="truncate text-xs text-muted-foreground">
                 Remates e transmissões ao vivo
               </small>
             </span>
@@ -1913,7 +1448,7 @@ function App() {
           >
             <Button
               variant={view === 'home' ? 'secondary' : 'ghost'}
-              className="hidden rounded-full font-black sm:inline-flex"
+              className="hidden rounded-md font-semibold sm:inline-flex"
               type="button"
               onClick={() => setView('home')}
             >
@@ -1922,12 +1457,13 @@ function App() {
             </Button>
           {currentAuctionHouse && (
             <Button
-              className="rounded-full bg-primary px-4 font-black text-primary-foreground shadow-[0_14px_34px_rgba(18,98,70,0.22)] hover:bg-primary/90"
+              aria-label="Criar remate"
+              className="rounded-md px-3 font-semibold sm:px-4"
               type="button"
               onClick={() => setView('createAuction')}
             >
               <Plus className="size-4" />
-              Criar remate
+              <span className="hidden sm:inline">Criar remate</span>
             </Button>
           )}
           <AccountMenu
@@ -2497,7 +2033,16 @@ function App() {
           )}
         </section>
       ) : view === 'accountDetails' ? (
-        renderAccountDetails()
+        <AccountDetailsPage
+          auctionHouse={currentAuctionHouse}
+          user={currentUser}
+          error={error}
+          onBack={() => {
+            setError('');
+            setView('home');
+          }}
+          resolveMediaUrl={resolveMediaUrl}
+        />
       ) : view === 'createAuction' ? (
         <section className="register-page">
           <div className="register-copy">
@@ -2978,179 +2523,31 @@ function App() {
           </form>
         </section>
       ) : (
-        <section className="mx-auto grid w-full max-w-7xl gap-8 px-5 py-10 sm:px-8 lg:py-12">
-          <div className="relative overflow-hidden rounded-[28px] border border-primary/10 bg-card/95 p-6 shadow-[0_24px_80px_rgba(15,23,42,0.09)] sm:p-8">
-            <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_18%_20%,rgba(18,98,70,0.12),transparent_36%),linear-gradient(135deg,rgba(255,255,255,0.70),rgba(231,242,236,0.52))]" />
-            <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-              <div className="max-w-3xl">
-                <span className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary/8 px-3 py-1 text-xs font-black uppercase tracking-[0.16em] text-primary">
-                  <Radio className="size-3.5" />
-                  REMATES
-                </span>
-                <h1 className="mt-4 text-4xl font-black tracking-tight text-foreground sm:text-5xl">
-                  Remates disponíveis
-                </h1>
-                <p className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
-                  Acompanhe transmissões ao vivo, consulte os próximos eventos e
-                  acesse os lotes disponíveis em cada escritório leiloeiro.
-                </p>
-              </div>
-
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                {canCompleteSellerProfile && (
-                  <Button
-                    variant="secondary"
-                    className="rounded-full font-black"
-                    type="button"
-                    onClick={() => setView('sellerProfile')}
-                  >
-                    <Sprout className="size-4" />
-                    Cadastro de produtor
-                  </Button>
-                )}
-                {currentAuctionHouse ? (
-                  <Button
-                    className="rounded-full bg-primary px-5 font-black text-primary-foreground shadow-[0_14px_34px_rgba(18,98,70,0.22)] hover:bg-primary/90"
-                    type="button"
-                    onClick={() => setView('createAuction')}
-                  >
-                    <Plus className="size-4" />
-                    Criar remate
-                  </Button>
-                ) : null}
-              </div>
-            </div>
-
-            <Separator className="my-6 bg-border/80" />
-
-            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-              <div className="flex items-center gap-3 text-sm font-bold text-muted-foreground">
-                <span className="grid size-10 place-items-center rounded-full bg-secondary text-primary">
-                  <Search className="size-4" />
-                </span>
-                <span>
-                  {visibleAuctions.length}{' '}
-                  {visibleAuctions.length === 1 ? 'remate encontrado' : 'remates encontrados'}
-                </span>
-              </div>
-
-              <div className="hidden md:block">
-                <Select
-                  value={auctionStatusFilter}
-                  onValueChange={(value) =>
-                    setAuctionStatusFilter(value as AuctionStatusFilter)
-                  }
-                >
-                  <SelectTrigger className="h-11 w-56 rounded-full border-primary/15 bg-white font-bold shadow-sm">
-                    <SelectValue placeholder="Filtrar remates" />
-                  </SelectTrigger>
-                  <SelectContent className="rounded-2xl border-primary/10 bg-popover/95 p-1 shadow-[0_24px_70px_rgba(15,23,42,0.16)] backdrop-blur-xl">
-                    <SelectItem value="ALL">Todos os remates</SelectItem>
-                    <SelectItem value="LIVE">Ao vivo</SelectItem>
-                    <SelectItem value="SCHEDULED">Agendados</SelectItem>
-                    <SelectItem value="FINISHED">Finalizados</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <Sheet>
-                <SheetTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className="rounded-full border-primary/15 bg-white/70 font-black shadow-sm backdrop-blur md:hidden"
-                    type="button"
-                  >
-                    <Search className="size-4" />
-                    Filtrar
-                  </Button>
-                </SheetTrigger>
-                <SheetContent
-                  side="bottom"
-                  className="rounded-t-[24px] border-primary/10 bg-popover/95 p-6 shadow-[0_-24px_70px_rgba(15,23,42,0.16)] backdrop-blur-xl"
-                >
-                  <SheetHeader>
-                    <SheetTitle className="text-xl font-black text-foreground">
-                      Filtrar remates
-                    </SheetTitle>
-                    <SheetDescription className="font-medium text-muted-foreground">
-                      Escolha o status dos eventos exibidos na listagem.
-                    </SheetDescription>
-                  </SheetHeader>
-                  <div className="mt-5">
-                    <Select
-                      value={auctionStatusFilter}
-                      onValueChange={(value) =>
-                        setAuctionStatusFilter(value as AuctionStatusFilter)
-                      }
-                    >
-                      <SelectTrigger className="h-12 rounded-xl border-primary/15 bg-white/75 font-bold">
-                        <SelectValue placeholder="Filtrar remates" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="ALL">Todos os remates</SelectItem>
-                        <SelectItem value="LIVE">Ao vivo</SelectItem>
-                        <SelectItem value="SCHEDULED">Agendados</SelectItem>
-                        <SelectItem value="FINISHED">Finalizados</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </SheetContent>
-              </Sheet>
-            </div>
-          </div>
-
-          {createdUserName && (
-            <p className="success-message">Bem-vindo, {createdUserName}.</p>
+        <HomePage
+          auctions={visibleAuctions}
+          filteredAuctions={filteredVisibleAuctions}
+          auctionStatusFilter={auctionStatusFilter}
+          isLoading={isLoadingAuctions}
+          error={error}
+          createdUserName={createdUserName}
+          createdLotId={createdLotId}
+          createdAuctionId={createdAuctionId}
+          isAuctionHouse={Boolean(currentAuctionHouse)}
+          isSeller={Boolean(currentUser?.sellerProfile)}
+          canCompleteSellerProfile={canCompleteSellerProfile}
+          canRegisterLot={Boolean(
+            selectableAuctions.length > 0 &&
+              (currentAuctionHouse || currentUser?.sellerProfile),
           )}
-          {createdLotId && (
-            <p className="success-message">
-              {currentAuctionHouse
-                ? 'Lote adicionado ao remate.'
-                : 'Lote enviado para aprovacao do escritorio.'}
-            </p>
-          )}
-          {createdAuctionId && (
-            <p className="success-message">Remate criado e pronto para receber lotes.</p>
-          )}
+          getAuctionLotCount={getAuctionLotCount}
+          isOwnAuction={isAuctionOwnedByCurrentOffice}
+          onFilterChange={setAuctionStatusFilter}
+          onEnterAuction={enterAuctionRoom}
+          onCreateAuction={() => setView('createAuction')}
+          onRegisterLot={() => setView('registerLot')}
+          onCompleteSellerProfile={() => setView('sellerProfile')}
+        />
 
-          {isLoadingAuctions ? (
-            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-              {Array.from({ length: 3 }).map((_, index) => (
-                <AuctionCardSkeleton key={index} />
-              ))}
-            </div>
-          ) : filteredVisibleAuctions.length === 0 ? (
-            <div className="rounded-[22px] border border-dashed border-primary/20 bg-card/65 p-10 text-center shadow-[0_18px_55px_rgba(15,23,42,0.07)] backdrop-blur">
-              <CalendarDays className="mx-auto mb-4 size-10 text-primary" />
-              <h2 className="text-2xl font-black text-foreground">
-                Nenhum remate disponível no momento.
-              </h2>
-              <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
-                Quando novos eventos forem publicados, eles aparecerão aqui com a
-                imagem de capa, status da transmissão e informações dos lotes.
-              </p>
-            </div>
-          ) : (
-            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-              {filteredVisibleAuctions.map((auction, index) => {
-                const auctionLotCount = getAuctionLotCount(auction);
-                const isOwnAuction = isAuctionOwnedByCurrentOffice(auction);
-
-                return (
-                  <AuctionCard
-                    key={auction.id}
-                    auction={auction}
-                    lotCount={auctionLotCount}
-                    isOwnAuction={Boolean(currentAuctionHouse && isOwnAuction)}
-                    isHighlighted={auction.id === createdAuctionId}
-                    onEnter={enterAuctionRoom}
-                    index={index}
-                  />
-                );
-              })}
-            </div>
-          )}
-        </section>
       )}
     </main>
   );

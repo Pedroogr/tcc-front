@@ -76,6 +76,9 @@ export function AdminApp() {
       return;
     }
 
+    // A carga inicial sincroniza esta tela com a API; as atualizacoes de estado
+    // acontecem dentro da rotina assincrona e nao derivam do render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadInvites();
   }, [isAdmin, loadInvites]);
 

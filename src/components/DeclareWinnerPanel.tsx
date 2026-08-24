@@ -46,6 +46,9 @@ export function DeclareWinnerPanel({
 
   // Limpa a venda exibida ao trocar o lote em pista.
   useEffect(() => {
+    // O painel permanece montado entre lotes; este reset separa os estados de
+    // vendas distintas sem alterar o contrato do componente.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSale(null);
     setError('');
   }, [inPistaLot?.id]);
