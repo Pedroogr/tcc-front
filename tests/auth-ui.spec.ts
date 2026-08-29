@@ -1,0 +1,19 @@
+import { test, expect } from '@playwright/test';
+
+test.describe('authentication UI', () => {
+  test('switches between registration and login modes', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: 'Crie sua conta' })).toBeVisible();
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page.getByRole('heading', { name: 'Entre na sua conta' })).toBeVisible();
+    await expect(page.getByLabel('Nome completo')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Cadastro' }).click();
+    await expect(page.getByLabel('Nome completo')).toBeVisible();
+  });
+
+  test('shows form validation for incomplete registration', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Criar conta e entrar' }).click();
+    await expect(page.locator('input:invalid').first()).toBeVisible();
+  });
+});
