@@ -36,6 +36,6 @@ test.describe('authentication UI', () => {
     await page.getByLabel('E-mail').fill('wrong@example.test');
     await page.getByLabel('Senha').fill('wrong-password');
     await page.getByRole('button', { name: 'Entrar' }).click();
-    await expect(page.getByRole('alert')).toContainText('E-mail ou senha invalidos');
+    await expect(page.getByRole('alert')).toContainText('E-mail ou senha inválidos.');
   });
 });
