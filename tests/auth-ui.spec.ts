@@ -26,4 +26,16 @@ test.describe('authentication UI', () => {
     await expect(seller).toHaveAttribute('aria-pressed', 'true');
     await expect(page.getByText('Dados do vendedor')).toBeVisible();
   });
+
+  test('shows the API error when login is rejected', async ({ page }) => {
+    await page.route('**/auth/login', async (route) => {
+      await route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ message: 'E-mail ou senha invalidos' }) });
+    });
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await page.getByLabel('E-mail').fill('wrong@example.test');
+    await page.getByLabel('Senha').fill('wrong-password');
+    await page.getByRole('button', { name: 'Entrar' }).click();
+    await expect(page.getByRole('alert')).toContainText('E-mail ou senha invalidos');
+  });
 });
