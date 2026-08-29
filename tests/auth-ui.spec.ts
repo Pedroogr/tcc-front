@@ -16,4 +16,14 @@ test.describe('authentication UI', () => {
     await page.getByRole('button', { name: 'Criar conta e entrar' }).click();
     await expect(page.locator('input:invalid').first()).toBeVisible();
   });
+
+  test('switches buyer and seller registration profiles', async ({ page }) => {
+    await page.goto('/');
+    const buyer = page.getByRole('button', { name: 'Comprador' });
+    const seller = page.getByRole('button', { name: 'Vendedor' });
+    await expect(buyer).toHaveAttribute('aria-pressed', 'true');
+    await seller.click();
+    await expect(seller).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByText('Dados do vendedor')).toBeVisible();
+  });
 });
