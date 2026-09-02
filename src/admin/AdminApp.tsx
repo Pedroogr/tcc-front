@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Copy, LogOut, RefreshCw, ShieldCheck, Ticket, XCircle } from 'lucide-react';
+import { Check, Copy, LogOut, RefreshCw, ShieldCheck, Ticket, XCircle } from 'lucide-react';
 import { authStorage } from '../api/http';
 import {
   createOfficeInvite,
@@ -13,7 +13,7 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 
 function getStoredUser(): User | null {
-  const stored = localStorage.getItem(authStorage.userKey);
+  const stored = sessionStorage.getItem(authStorage.userKey);
 
   if (!stored) {
     return null;
@@ -60,7 +60,7 @@ function formatInviteStatus(status: string) {
 }
 
 export function AdminApp() {
-  const token = localStorage.getItem(authStorage.tokenKey);
+  const token = sessionStorage.getItem(authStorage.tokenKey);
   const user = getStoredUser();
   const isAdmin = Boolean(token && user?.platformRole === 'SYSTEM_ADMIN');
 
@@ -72,6 +72,8 @@ export function AdminApp() {
   const [actionError, setActionError] = useState('');
   const [invitesError, setInvitesError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLinkCopied, setIsLinkCopied] = useState(false);
+  const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadInvites = useCallback(async () => {
     setIsLoadingInvites(true);
@@ -99,6 +101,14 @@ export function AdminApp() {
     void loadInvites();
   }, [isAdmin, loadInvites]);
 
+  useEffect(() => {
+    return () => {
+      if (copyResetTimeoutRef.current) {
+        clearTimeout(copyResetTimeoutRef.current);
+      }
+    };
+  }, []);
+
   if (!isAdmin) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4 text-sm text-muted-foreground">
@@ -108,10 +118,10 @@ export function AdminApp() {
   }
 
   function handleLogout() {
-    localStorage.removeItem(authStorage.tokenKey);
-    localStorage.removeItem(authStorage.userKey);
-    localStorage.removeItem(authStorage.auctionHouseKey);
-    localStorage.removeItem(authStorage.actorTypeKey);
+    sessionStorage.removeItem(authStorage.tokenKey);
+    sessionStorage.removeItem(authStorage.userKey);
+    sessionStorage.removeItem(authStorage.auctionHouseKey);
+    sessionStorage.removeItem(authStorage.actorTypeKey);
     window.location.assign('/');
   }
 
@@ -120,6 +130,7 @@ export function AdminApp() {
     setIsSubmitting(true);
     setActionError('');
     setCreatedLink('');
+    setIsLinkCopied(false);
 
     try {
       const invite = await createOfficeInvite({
@@ -137,6 +148,27 @@ export function AdminApp() {
       setActionError(parseErrorMessage(error, 'Nao foi possivel criar o convite.'));
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleCopyCreatedLink() {
+    setActionError('');
+
+    try {
+      await navigator.clipboard.writeText(createdLink);
+      setIsLinkCopied(true);
+
+      if (copyResetTimeoutRef.current) {
+        clearTimeout(copyResetTimeoutRef.current);
+      }
+
+      copyResetTimeoutRef.current = setTimeout(() => {
+        setIsLinkCopied(false);
+        copyResetTimeoutRef.current = null;
+      }, 2000);
+    } catch {
+      setIsLinkCopied(false);
+      setActionError('Nao foi possivel copiar o link. Selecione e copie manualmente.');
     }
   }
 
@@ -216,8 +248,23 @@ export function AdminApp() {
                 <code className="break-all text-xs leading-relaxed text-muted-foreground">
                   {createdLink}
                 </code>
-                <Button size="sm" type="button" variant="outline" onClick={() => void navigator.clipboard.writeText(createdLink)}>
-                  <Copy /> Copiar link
+                <Button
+                  className={
+                    isLinkCopied
+                      ? 'border-success/40 bg-success/10 text-success transition-all duration-200 hover:bg-success/15'
+                      : 'transition-all duration-200 active:scale-[0.98]'
+                  }
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                  onClick={() => void handleCopyCreatedLink()}
+                >
+                  {isLinkCopied ? (
+                    <Check className="animate-in fade-in-0 zoom-in-75 duration-200" />
+                  ) : (
+                    <Copy />
+                  )}
+                  {isLinkCopied ? 'Copiado!' : 'Copiar link'}
                 </Button>
               </div>
             )}
