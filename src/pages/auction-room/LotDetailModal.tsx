@@ -1,9 +1,9 @@
 import type { ChangeEvent } from 'react';
 import { X } from 'lucide-react';
-import type { Bid, Lot } from '@/types/lot';
+import type { Lot } from '@/types/lot';
 import { Money } from '@/design/primitives/Money';
 import { Button } from '@/components/ui/button';
-import { formatBidStatus, formatLotStatus } from '@/utils/auctionLabels';
+import { formatLotStatus } from '@/utils/auctionLabels';
 
 type PendingImage = {
   id: string;
@@ -13,7 +13,6 @@ type PendingImage = {
 
 type LotDetailModalProps = {
   lot: Lot;
-  winningBid: Bid | null;
   canManage: boolean;
   /** Comprador logado — o escritorio nao da lance no proprio remate. */
   isBidder: boolean;
@@ -40,7 +39,6 @@ function Block({ title, children }: { title: string; children: React.ReactNode }
 
 export function LotDetailModal({
   lot,
-  winningBid,
   canManage,
   isBidder,
   isSubmitting,
@@ -123,36 +121,17 @@ export function LotDetailModal({
           <p className="text-sm leading-relaxed text-muted-foreground">{lot.description}</p>
         )}
 
-        <Block title="Lances">
+        {/* So o preco atual e publico; historico e identidade ficam no painel
+            do escritorio, nunca neste modal compartilhado (RF06). */}
+        <Block title="Lance atual">
           <div className="flex items-baseline justify-between gap-4">
-            <span className="text-[13px] text-muted-foreground">Lance atual</span>
-            <Money value={winningBid?.amount ?? lot.initialPrice} />
+            <span className="text-[13px] text-muted-foreground">
+              {lot.status === 'SOLD' ? 'Valor final' : 'Lance atual'}
+            </span>
+            <Money value={lot.currentPrice ?? lot.initialPrice} />
           </div>
 
-          {lot.bids?.length ? (
-            <ul className="flex flex-col rounded-[10px] border border-border">
-              {lot.bids.map((bid) => (
-                <li
-                  className="flex items-center justify-between gap-4 border-b border-border px-3.5 py-2.5 last:border-b-0"
-                  key={bid.id}
-                >
-                  <span className="min-w-0 truncate text-[13.5px]">
-                    {bid.bidder?.name || 'Comprador'}
-                  </span>
-                  <div className="flex shrink-0 items-center gap-3">
-                    <small className="text-[11.5px] text-text-subtle">
-                      {formatBidStatus(bid.status)}
-                    </small>
-                    <Money muted size="sm" value={bid.amount} />
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-[13px] text-muted-foreground">Nenhum lance registrado ainda.</p>
-          )}
-
-          {isBidder && (
+          {isBidder && lot.status === 'IN_AUCTION' && (
             <p className="text-xs text-text-subtle">
               Os lances são feitos no painel do lote em pista, ao lado do vídeo.
             </p>

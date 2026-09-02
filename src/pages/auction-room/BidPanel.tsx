@@ -1,13 +1,12 @@
 import type { FormEvent } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
-import type { Bid, Lot } from '@/types/lot';
+import type { Lot } from '@/types/lot';
 import type { BuyerRegistration } from '@/types/user';
 import { Money } from '@/design/primitives/Money';
 import { Button } from '@/components/ui/button';
 
 type BidPanelProps = {
   inPistaLot: Lot | null;
-  winningBid: Bid | null;
   /** Comprador logado: escritorio nao da lance no proprio remate. */
   canBid: boolean;
   /** undefined enquanto carrega, null quando nunca solicitou liberacao. */
@@ -32,7 +31,6 @@ function Hint({ children }: { children: React.ReactNode }) {
 
 export function BidPanel({
   inPistaLot,
-  winningBid,
   canBid,
   registration,
   bidAmount,
@@ -57,7 +55,7 @@ export function BidPanel({
     );
   }
 
-  const currentAmount = winningBid?.amount ?? inPistaLot.initialPrice;
+  const currentAmount = inPistaLot.currentPrice ?? inPistaLot.initialPrice;
 
   return (
     <section className="overflow-hidden rounded-xl border border-brand-line bg-card">
@@ -79,14 +77,10 @@ export function BidPanel({
           )}
         </div>
 
+        {/* Comprador ve apenas o preco atual, sem historico nem identidade (RF06). */}
         <div className="flex flex-col gap-1 rounded-[10px] bg-muted p-4">
           <span className="t-label">Lance atual</span>
           <Money size="lg" value={currentAmount} />
-          <span className="text-xs text-muted-foreground">
-            {inPistaLot.bids?.length
-              ? `${inPistaLot.bids.length} ${inPistaLot.bids.length === 1 ? 'lance' : 'lances'}`
-              : 'Nenhum lance ainda'}
-          </span>
         </div>
 
         {canBid && (

@@ -25,3 +25,7 @@ dist-ssr
 
 # Artefatos de build do TypeScript
 .tmp
+
+# Playwright
+/test-results/
+/playwright-report/

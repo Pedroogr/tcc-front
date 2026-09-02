@@ -6,6 +6,7 @@ import {
   Gavel,
   KeyRound,
   LogOut,
+  PackageCheck,
   Sprout,
   Trophy,
   UserRound,
@@ -29,6 +30,7 @@ type AccountMenuProps = {
   onShowSellerProfile: () => void;
   onShowSales: () => void;
   onShowMyWins: () => void;
+  onShowMySales: () => void;
   onChangePassword: () => void;
   onLogout: () => void;
 };
@@ -74,9 +76,11 @@ export function AccountMenu({
   onShowSellerProfile,
   onShowSales,
   onShowMyWins,
+  onShowMySales,
   onChangePassword,
   onLogout,
 }: AccountMenuProps) {
+  const isSeller = Boolean(currentUser?.sellerProfile);
   const accountName = currentAuctionHouse?.name ?? currentUser?.name ?? 'Conta';
   const accountSubtitle = currentAuctionHouse ? 'Escritório' : 'Usuário';
   const initials = getInitials(accountName) || 'CA';
@@ -150,6 +154,11 @@ export function AccountMenu({
               <AccountMenuItem icon={Trophy} onSelect={onShowMyWins}>
                 Meus arremates
               </AccountMenuItem>
+              {isSeller && (
+                <AccountMenuItem icon={PackageCheck} onSelect={onShowMySales}>
+                  Minhas vendas
+                </AccountMenuItem>
+              )}
               <AccountMenuItem icon={Sprout} onSelect={onShowSellerProfile}>
                 Cadastro de produtor
               </AccountMenuItem>

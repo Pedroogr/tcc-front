@@ -1,5 +1,5 @@
 import { apiRequest } from './http';
-import type { Bid, CreateLotPayload, Lot } from '../types/lot';
+import type { Bid, CreateLotPayload, Lot, OfficeBid } from '../types/lot';
 
 export function listLots() {
   return apiRequest<Lot[]>('/lots');
@@ -24,4 +24,10 @@ export function createBid(lotId: string, amount: number) {
     method: 'POST',
     body: JSON.stringify({ amount }),
   });
+}
+
+// Historico completo com identidade dos compradores, autorizado apenas ao
+// escritorio dono do remate (RF07).
+export function listLotBidHistory(lotId: string) {
+  return apiRequest<OfficeBid[]>(`/lots/${lotId}/bids`);
 }

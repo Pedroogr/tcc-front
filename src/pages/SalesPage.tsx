@@ -1,10 +1,10 @@
 import { ChevronLeft } from 'lucide-react';
-import type { Sale } from '@/types/sale';
+import type { OfficeSale } from '@/types/sale';
 import { Button } from '@/components/ui/button';
 import { SaleRecordList } from './sales/SaleRecordList';
 
 type SalesPageProps = {
-  sales: Sale[];
+  sales: OfficeSale[];
   isLoading: boolean;
   error: string;
   onBack: () => void;
