@@ -96,10 +96,17 @@ export type LotSoldPayload = {
   soldAt: string;
 };
 
+export type LotWinnerAnnouncedPayload = LotSoldPayload & {
+  lotCode: string;
+  lotTitle: string;
+  winnerName: string;
+};
+
 type CommerceServerToClientEvents = {
   'bid:price-updated': (payload: BidPriceUpdatedPayload) => void;
   'bid:office-recorded': (payload: OfficeBidRecordedPayload) => void;
   'lot:sold': (payload: LotSoldPayload) => void;
+  'lot:winner-announced': (payload: LotWinnerAnnouncedPayload) => void;
   'sale:won': (payload: SaleWonPayload) => void;
   'commerce:error': (payload: { message: string }) => void;
 };
@@ -115,7 +122,7 @@ export type CommerceSocket = Socket<
 >;
 
 // Cliente unico de eventos comerciais: preco em tempo real, historico do
-// escritorio, lote vendido e notificacao privada do vencedor.
+// escritorio, lote vendido, anuncio aos compradores e notificacao privada.
 export function createCommerceSocket(): CommerceSocket {
   const token = sessionStorage.getItem(authStorage.tokenKey);
 

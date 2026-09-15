@@ -19,6 +19,13 @@ export function updateLot(id: string, payload: Partial<CreateLotPayload>) {
   });
 }
 
+export function setLotStage(id: string, status: 'AVAILABLE' | 'IN_AUCTION') {
+  return apiRequest<Lot>(`/lots/${id}/stage`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  });
+}
+
 export function createBid(lotId: string, amount: number) {
   return apiRequest<Bid>(`/lots/${lotId}/bids`, {
     method: 'POST',

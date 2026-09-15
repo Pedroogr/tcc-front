@@ -23,10 +23,14 @@ import {
   createLot,
   listLots,
   listLotBidHistory,
+  setLotStage,
   updateLot,
 } from './api/lotsApi';
 import { listAuctionHouseSales, listMySales, listMyWins } from './api/salesApi';
-import { createCommerceSocket } from './api/socket';
+import {
+  createCommerceSocket,
+  type LotWinnerAnnouncedPayload,
+} from './api/socket';
 import { upsertSellerProfile } from './api/usersApi';
 import { AccountMenu } from './components/AccountMenu';
 import { AuctionRoomPage } from './pages/AuctionRoomPage';
@@ -76,6 +80,10 @@ import {
   reconcileOfficeBidHistory,
 } from './utils/officeBidHistory';
 import { Plus, Radio } from 'lucide-react';
+
+type SaleToast =
+  | { kind: 'announcement'; payload: LotWinnerAnnouncedPayload }
+  | { kind: 'winner'; payload: SaleWonNotification };
 
 const emptyLotForm = {
   code: '',
@@ -160,6 +168,9 @@ const PLATFORM_BID_INCREMENT = 100;
 
 // Passo das setas do campo de lance.
 const BID_STEP = 5;
+
+// Tempo suficiente para leitura sem bloquear o proximo aviso da fila.
+const WINNER_NOTIFICATION_DURATION_MS = 8_000;
 
 const showDevDocumentTools = import.meta.env.DEV;
 
@@ -285,15 +296,27 @@ function getLotStageMessage(status: string, consignmentId?: string | null) {
     return 'Este lote está em pista e recebendo lances.';
   }
   if (status === 'AVAILABLE') {
-    return 'Lote liberado, aguardando ser colocado em pista.';
+    return 'Lote pronto para ser colocado em pista.';
   }
   // UNDER_REVIEW only means "awaiting confirmation" when the lot came from a
   // seller's consignment. A lot the auction house registered itself is
   // already approved, even if its stored status still says UNDER_REVIEW.
   if (status === 'UNDER_REVIEW' && consignmentId) {
-    return 'Lote enviado por um vendedor, aguardando sua confirmação.';
+    return 'Lote enviado por um vendedor; revise os dados antes de colocá-lo em pista.';
   }
-  return 'Lote pronto para ser liberado.';
+  if (['DRAFT', 'UNDER_REVIEW', 'APPROVED'].includes(status)) {
+    return 'Lote pronto para ser colocado em pista.';
+  }
+  if (status === 'SOLD') {
+    return 'Este lote já foi vendido.';
+  }
+  if (status === 'WITHDRAWN') {
+    return 'Este lote foi retirado.';
+  }
+  if (status === 'REJECTED') {
+    return 'Este lote foi recusado.';
+  }
+  return 'Nenhuma ação de pista disponível para este lote.';
 }
 
 function App() {
@@ -359,7 +382,21 @@ function App() {
   const [mySales, setMySales] = useState<SellerSale[]>([]);
   const [isLoadingMySales, setIsLoadingMySales] = useState(false);
   const [mySalesError, setMySalesError] = useState('');
-  const [winToast, setWinToast] = useState<SaleWonNotification | null>(null);
+  const [winToasts, setWinToasts] = useState<SaleWonNotification[]>([]);
+  const [saleAnnouncements, setSaleAnnouncements] = useState<
+    LotWinnerAnnouncedPayload[]
+  >([]);
+  const nextWinToast = winToasts[0];
+  const nextSaleAnnouncement = saleAnnouncements[0];
+  const saleToast = useMemo<SaleToast | null>(
+    () =>
+      nextWinToast
+        ? { kind: 'winner', payload: nextWinToast }
+        : nextSaleAnnouncement
+          ? { kind: 'announcement', payload: nextSaleAnnouncement }
+          : null,
+    [nextSaleAnnouncement, nextWinToast],
+  );
   // Historico nominal, so carregado e exibido para o escritorio dono (RF07).
   const [officeBidHistory, setOfficeBidHistory] = useState<OfficeBid[]>([]);
 
@@ -581,9 +618,33 @@ function App() {
     }
   }, []);
 
+  useEffect(() => {
+    if (!saleToast) {
+      return;
+    }
+
+    const toastKind = saleToast.kind;
+    const toastId =
+      toastKind === 'winner' ? saleToast.payload.saleId : saleToast.payload.lotId;
+    const timer = window.setTimeout(() => {
+      if (toastKind === 'winner') {
+        setWinToasts((current) =>
+          current[0]?.saleId === toastId ? current.slice(1) : current,
+        );
+        return;
+      }
+
+      setSaleAnnouncements((current) =>
+        current[0]?.lotId === toastId ? current.slice(1) : current,
+      );
+    }, WINNER_NOTIFICATION_DURATION_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [saleToast]);
+
   // Cliente unico de eventos comerciais enquanto a sala esta aberta (RF06/RF09):
-  // atualiza o preco anonimo para todos, alimenta o historico so do escritorio
-  // dono e entrega a notificacao privada de vitoria apenas ao comprador.
+  // atualiza o preco anonimo para todos, alimenta o historico so do escritorio,
+  // anuncia o vencedor apos a venda e mantem a notificacao privada de vitoria.
   useEffect(() => {
     if (view !== 'auctionRoom' || !selectedAuctionId || !isAuthenticated) {
       return;
@@ -630,8 +691,25 @@ function App() {
     });
 
     if (isBuyer) {
+      socket.on('lot:winner-announced', (payload) => {
+        setSaleAnnouncements((current) =>
+          current.some((announcement) => announcement.lotId === payload.lotId)
+            ? current
+            : [...current, payload],
+        );
+      });
+    }
+
+    if (isBuyer) {
       socket.on('sale:won', (payload) => {
-        setWinToast(payload);
+        setWinToasts((current) =>
+          current.some((notification) => notification.saleId === payload.saleId)
+            ? current
+            : [...current, payload],
+        );
+        setSaleAnnouncements((current) =>
+          current.filter((announcement) => announcement.lotId !== payload.lotId),
+        );
         void loadMyWins();
         void refreshLotsQuietly();
       });
@@ -974,7 +1052,7 @@ function App() {
     }
   }
 
-  async function handleSetLotStage(nextStatus: string) {
+  async function handleSetLotStage(nextStatus: 'AVAILABLE' | 'IN_AUCTION') {
     if (!selectedLot) {
       return;
     }
@@ -983,7 +1061,7 @@ function App() {
     setError('');
 
     try {
-      await updateLot(selectedLot.id, { status: nextStatus });
+      await setLotStage(selectedLot.id, nextStatus);
       await loadLots();
     } catch {
       setError('Nao foi possivel atualizar o status do lote.');
@@ -1026,8 +1104,13 @@ function App() {
 
     const amount = Number(bidAmount);
 
-    if (!bidAmount.trim() || Number.isNaN(amount)) {
+    if (!bidAmount.trim() || !Number.isFinite(amount) || amount < 0) {
       setError('Informe um valor de lance valido.');
+      return;
+    }
+
+    if (amount % BID_STEP !== 0) {
+      setError('O lance deve ser múltiplo de R$ 5.');
       return;
     }
 
@@ -1475,6 +1558,8 @@ function App() {
     setMyWinsError('');
     setMySales([]);
     setMySalesError('');
+    setWinToasts([]);
+    setSaleAnnouncements([]);
     setOfficeBidHistory([]);
     clearAuctionThumbnail();
     setView('home');
@@ -1619,30 +1704,51 @@ function App() {
         </div>
       </header>
 
-      {winToast && (
+      {saleToast && (
         <div className="win-toast" role="status">
           <div className="win-toast-body">
-            <strong>Você arrematou o lote {winToast.lotCode}! 🎉</strong>
+            <strong>
+              {saleToast.kind === 'winner'
+                ? `Você arrematou o lote ${saleToast.payload.lotCode}! 🎉`
+                : `${saleToast.payload.winnerName} arrematou o lote ${saleToast.payload.lotCode}`}
+            </strong>
             <span>
-              {winToast.lotTitle} · {formatCurrency(winToast.finalPrice)}
+              {saleToast.payload.lotTitle} · {formatCurrency(saleToast.payload.finalPrice)}
             </span>
           </div>
           <div className="win-toast-actions">
-            <button
-              className="secondary-action"
-              type="button"
-              onClick={() => {
-                setWinToast(null);
-                setView('myWins');
-                void loadMyWins();
-              }}
-            >
-              Ver meus arremates
-            </button>
+            {saleToast.kind === 'winner' && (
+              <button
+                className="secondary-action"
+                type="button"
+                onClick={() => {
+                  const saleId = saleToast.payload.saleId;
+                  setWinToasts((current) =>
+                    current[0]?.saleId === saleId ? current.slice(1) : current,
+                  );
+                  setView('myWins');
+                  void loadMyWins();
+                }}
+              >
+                Ver meus arremates
+              </button>
+            )}
             <button
               className="text-action"
               type="button"
-              onClick={() => setWinToast(null)}
+              onClick={() => {
+                if (saleToast.kind === 'winner') {
+                  const saleId = saleToast.payload.saleId;
+                  setWinToasts((current) =>
+                    current[0]?.saleId === saleId ? current.slice(1) : current,
+                  );
+                } else {
+                  const lotId = saleToast.payload.lotId;
+                  setSaleAnnouncements((current) =>
+                    current[0]?.lotId === lotId ? current.slice(1) : current,
+                  );
+                }
+              }}
             >
               Dispensar
             </button>

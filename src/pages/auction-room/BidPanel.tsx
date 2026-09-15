@@ -114,7 +114,7 @@ export function BidPanel({
                 </Button>
               </div>
             ) : (
-              <form className="flex flex-col gap-2.5" onSubmit={onSubmitBid}>
+              <form className="flex flex-col gap-2.5" noValidate onSubmit={onSubmitBid}>
                 <div className="flex items-center justify-between gap-3">
                   <label className="text-xs font-semibold" htmlFor="bid-amount">
                     Seu lance

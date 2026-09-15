@@ -1,4 +1,9 @@
-import { test, expect, type BrowserContext } from '@playwright/test';
+import {
+  test,
+  expect,
+  type BrowserContext,
+  type WebSocketRoute,
+} from '@playwright/test';
 
 const TS = '2026-09-02T12:00:00.000Z';
 
@@ -74,6 +79,14 @@ const newlyCreatedLot = {
   createdAt: '2026-09-02T12:01:00.000Z',
 };
 
+const underReviewLot = {
+  ...newlyCreatedLot,
+  id: 'lot-review',
+  code: 'L-03',
+  title: 'Lote em análise',
+  status: 'UNDER_REVIEW',
+};
+
 const officeHistory = [
   {
     id: 'b1',
@@ -95,6 +108,37 @@ const officeHistory = [
 
 function json(body: unknown) {
   return { status: 200, contentType: 'application/json', body: JSON.stringify(body) };
+}
+
+async function setupCommerceSocket(context: BrowserContext) {
+  let commerceSocket: WebSocketRoute | null = null;
+  let resolveAuctionJoin!: () => void;
+  const auctionJoined = new Promise<void>((resolve) => {
+    resolveAuctionJoin = resolve;
+  });
+
+  await context.routeWebSocket(/\/socket\.io\//, (webSocket) => {
+    webSocket.onMessage((message) => {
+      const frame = String(message);
+
+      if (frame.startsWith('40')) {
+        webSocket.send('40{"sid":"commerce-test-socket"}');
+      } else if (frame.startsWith('42') && frame.includes('"auction:join"')) {
+        commerceSocket = webSocket;
+        resolveAuctionJoin();
+      } else if (frame === '2') {
+        webSocket.send('3');
+      }
+    });
+    webSocket.send(
+      '0{"sid":"commerce-test-engine","upgrades":[],"pingInterval":25000,"pingTimeout":20000,"maxPayload":1000000}',
+    );
+  });
+
+  return async (event: string, payload: unknown) => {
+    await auctionJoined;
+    commerceSocket?.send(`42${JSON.stringify([event, payload])}`);
+  };
 }
 
 async function setupCommonRoutes(context: BrowserContext) {
@@ -141,6 +185,243 @@ async function loginAndEnterRoom(
 }
 
 test.describe('auction room commerce', () => {
+  test('announces the lot winner to another buyer in real time', async ({
+    context,
+    page,
+  }) => {
+    const emitCommerceEvent = await setupCommerceSocket(context);
+    await setupCommonRoutes(context);
+    await loginAndEnterRoom(page, buyer.email);
+
+    await emitCommerceEvent('lot:winner-announced', {
+      lotId: inPistaLot.id,
+      lotCode: inPistaLot.code,
+      lotTitle: inPistaLot.title,
+      finalPrice: '1250',
+      soldAt: TS,
+      winnerName: 'Comprador Vencedor',
+    });
+
+    const announcement = page.getByRole('status').filter({
+      hasText: 'Comprador Vencedor arrematou o lote L-01',
+    });
+    await expect(announcement).toBeVisible();
+    await expect(announcement).toContainText('Lote em Pista');
+    await expect(announcement).toContainText(/R\$\s*1\.250/);
+  });
+
+  test('automatically advances queued winner announcements', async ({ context, page }) => {
+    const emitCommerceEvent = await setupCommerceSocket(context);
+    await setupCommonRoutes(context);
+    await loginAndEnterRoom(page, buyer.email);
+
+    await emitCommerceEvent('lot:winner-announced', {
+      lotId: inPistaLot.id,
+      lotCode: inPistaLot.code,
+      lotTitle: inPistaLot.title,
+      finalPrice: '1250',
+      soldAt: TS,
+      winnerName: 'Primeiro Vencedor',
+    });
+    await emitCommerceEvent('lot:winner-announced', {
+      lotId: newlyCreatedLot.id,
+      lotCode: newlyCreatedLot.code,
+      lotTitle: newlyCreatedLot.title,
+      finalPrice: '1800',
+      soldAt: TS,
+      winnerName: 'Segundo Vencedor',
+    });
+
+    await expect(page.getByText('Primeiro Vencedor arrematou o lote L-01')).toBeVisible();
+    await expect(page.getByText('Segundo Vencedor arrematou o lote L-02')).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.getByRole('status')).toHaveCount(0, { timeout: 10_000 });
+  });
+
+  test('does not show the buyer announcement to the auction house', async ({
+    context,
+    page,
+  }) => {
+    const emitCommerceEvent = await setupCommerceSocket(context);
+    await setupCommonRoutes(context);
+    await loginAndEnterRoom(page, auctionHouse.email);
+
+    await emitCommerceEvent('lot:sold', {
+      lotId: inPistaLot.id,
+      finalPrice: '1250',
+      soldAt: TS,
+    });
+    await emitCommerceEvent('lot:winner-announced', {
+      lotId: inPistaLot.id,
+      lotCode: inPistaLot.code,
+      lotTitle: inPistaLot.title,
+      finalPrice: '1250',
+      soldAt: TS,
+      winnerName: 'Comprador Vencedor',
+    });
+
+    await expect(page.getByText('Nenhum lote em pista no momento.')).toBeVisible();
+    await expect(page.getByRole('status')).toHaveCount(0);
+  });
+
+  test('keeps the private winning message for the winning buyer', async ({
+    context,
+    page,
+  }) => {
+    const emitCommerceEvent = await setupCommerceSocket(context);
+    await setupCommonRoutes(context);
+    await context.route('**/sales/me', (route) => route.fulfill(json([])));
+    await loginAndEnterRoom(page, buyer.email);
+
+    await emitCommerceEvent('lot:sold', {
+      lotId: inPistaLot.id,
+      finalPrice: '1250',
+      soldAt: TS,
+    });
+    await emitCommerceEvent('lot:winner-announced', {
+      lotId: inPistaLot.id,
+      lotCode: inPistaLot.code,
+      lotTitle: inPistaLot.title,
+      finalPrice: '1250',
+      soldAt: TS,
+      winnerName: buyer.name,
+    });
+    await emitCommerceEvent('sale:won', {
+      saleId: 'sale-1',
+      lotId: inPistaLot.id,
+      lotCode: inPistaLot.code,
+      lotTitle: inPistaLot.title,
+      auctionId: auction.id,
+      auctionTitle: auction.title,
+      finalPrice: '1250',
+    });
+    await emitCommerceEvent('lot:winner-announced', {
+      lotId: newlyCreatedLot.id,
+      lotCode: newlyCreatedLot.code,
+      lotTitle: newlyCreatedLot.title,
+      finalPrice: '1800',
+      soldAt: TS,
+      winnerName: 'Outro Comprador',
+    });
+
+    await expect(page.getByText('Você arrematou o lote L-01! 🎉')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Ver meus arremates' })).toBeVisible();
+    await expect(page.getByText(`${buyer.name} arrematou o lote L-01`)).toHaveCount(0);
+
+    await expect(page.getByText('Outro Comprador arrematou o lote L-02')).toBeVisible({
+      timeout: 10_000,
+    });
+  });
+
+  test('queues two private wins without overwriting the first one', async ({
+    context,
+    page,
+  }) => {
+    const emitCommerceEvent = await setupCommerceSocket(context);
+    await setupCommonRoutes(context);
+    await context.route('**/sales/me', (route) => route.fulfill(json([])));
+    await loginAndEnterRoom(page, buyer.email);
+
+    await emitCommerceEvent('sale:won', {
+      saleId: 'sale-1',
+      lotId: inPistaLot.id,
+      lotCode: inPistaLot.code,
+      lotTitle: inPistaLot.title,
+      auctionId: auction.id,
+      auctionTitle: auction.title,
+      finalPrice: '1250',
+    });
+    await emitCommerceEvent('sale:won', {
+      saleId: 'sale-2',
+      lotId: newlyCreatedLot.id,
+      lotCode: newlyCreatedLot.code,
+      lotTitle: newlyCreatedLot.title,
+      auctionId: auction.id,
+      auctionTitle: auction.title,
+      finalPrice: '1800',
+    });
+
+    await expect(page.getByText('Você arrematou o lote L-01! 🎉')).toBeVisible();
+    await expect(page.getByText('Você arrematou o lote L-02! 🎉')).toHaveCount(0);
+    await expect(page.getByText('Você arrematou o lote L-02! 🎉')).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.getByRole('status')).toHaveCount(0, { timeout: 10_000 });
+  });
+
+  test('submits an under-review lot directly to the auction stage', async ({
+    context,
+    page,
+  }) => {
+    let receivedStatus: string | undefined;
+
+    await setupCommonRoutes(context);
+    await context.unroute('**/lots');
+    await context.route('**/lots', (route) => route.fulfill(json([underReviewLot])));
+    await context.route('**/lots/lot-review/stage', async (route) => {
+      receivedStatus = (route.request().postDataJSON() as { status?: string }).status;
+      await route.fulfill(json({ ...underReviewLot, status: receivedStatus }));
+    });
+    await loginAndEnterRoom(page, auctionHouse.email);
+
+    await page.getByRole('button', { name: /L-03/ }).click();
+    await expect(page.getByRole('button', { name: 'Liberar lote' })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Colocar em pista' }).click();
+    await expect.poll(() => receivedStatus).toBe('IN_AUCTION');
+  });
+
+  test('shows a controlled error and does not send a bid outside the R$ 5 step', async ({
+    context,
+    page,
+  }) => {
+    let bidPostRequests = 0;
+
+    await setupCommonRoutes(context);
+    await context.unroute('**/lots/*/bids');
+    await context.route('**/lots/*/bids', (route) => {
+      if (route.request().method() === 'POST') {
+        bidPostRequests += 1;
+      }
+      return route.fulfill(json(officeHistory));
+    });
+    await loginAndEnterRoom(page, buyer.email);
+
+    await page.getByLabel('Seu lance').fill('1252');
+    await page.getByRole('button', { name: 'Dar lance' }).click();
+
+    await expect(page.getByText('O lance deve ser múltiplo de R$ 5.')).toBeVisible();
+    expect(bidPostRequests).toBe(0);
+  });
+
+  test('clears a buyer announcement before another account logs in', async ({
+    context,
+    page,
+  }) => {
+    const emitCommerceEvent = await setupCommerceSocket(context);
+    await setupCommonRoutes(context);
+    await loginAndEnterRoom(page, buyer.email);
+
+    await emitCommerceEvent('lot:winner-announced', {
+      lotId: inPistaLot.id,
+      lotCode: inPistaLot.code,
+      lotTitle: inPistaLot.title,
+      finalPrice: '1250',
+      soldAt: TS,
+      winnerName: 'Comprador Vencedor',
+    });
+    await expect(page.getByText('Comprador Vencedor arrematou o lote L-01')).toBeVisible();
+
+    await page.getByRole('button', { name: /Comprador Teste/ }).click();
+    await page.getByRole('menuitem', { name: 'Sair' }).click();
+    await page.getByLabel('E-mail').fill(auctionHouse.email);
+    await page.getByLabel('Senha').fill('any-password');
+    await page.getByRole('button', { name: 'Entrar' }).click();
+
+    await expect(page.getByRole('button', { name: /Escritorio Teste/ })).toBeVisible();
+    await expect(page.getByText('Comprador Vencedor arrematou o lote L-01')).toHaveCount(0);
+  });
+
   test('shows the buyer only the anonymous current price, never history or names', async ({
     context,
     page,

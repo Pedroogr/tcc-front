@@ -142,17 +142,7 @@ export function LotDetailModal({
           <Block title="Gerenciar lote">
             <p className="text-[13px] text-muted-foreground">{stageMessage}</p>
             <div className="flex flex-wrap gap-2">
-              {lot.status !== 'AVAILABLE' && lot.status !== 'IN_AUCTION' && (
-                <Button
-                  disabled={isSubmitting}
-                  type="button"
-                  variant="outline"
-                  onClick={() => onSetStage('AVAILABLE')}
-                >
-                  Liberar lote
-                </Button>
-              )}
-              {lot.status === 'AVAILABLE' && (
+              {['DRAFT', 'UNDER_REVIEW', 'APPROVED', 'AVAILABLE'].includes(lot.status) && (
                 <Button disabled={isSubmitting} type="button" onClick={() => onSetStage('IN_AUCTION')}>
                   Colocar em pista
                 </Button>
