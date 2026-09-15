@@ -61,6 +61,19 @@ const inPistaLot = {
   bids: [{ id: 'b1', amount: '1250', status: 'WINNING', bidder: { id: 'x', name: 'Comprador Sigiloso' } }],
 };
 
+const newlyCreatedLot = {
+  id: 'lot-2',
+  code: 'L-02',
+  title: 'Lote adicionado ao vivo',
+  status: 'DRAFT',
+  quantity: 1,
+  initialPrice: '1800',
+  currentPrice: '1800',
+  auctionId: 'auction-1',
+  media: [],
+  createdAt: '2026-09-02T12:01:00.000Z',
+};
+
 const officeHistory = [
   {
     id: 'b1',
@@ -143,6 +156,27 @@ test.describe('auction room commerce', () => {
     await expect(page.getByText('Histórico de lances')).toHaveCount(0);
   });
 
+  test('shows a lot created while the buyer is already in the auction room', async ({
+    context,
+    page,
+  }) => {
+    let lotRequests = 0;
+
+    await setupCommonRoutes(context);
+    await context.unroute('**/lots');
+    await context.route('**/lots', (route) => {
+      lotRequests += 1;
+      return route.fulfill(
+        json(lotRequests >= 3 ? [newlyCreatedLot, inPistaLot] : [inPistaLot]),
+      );
+    });
+    await loginAndEnterRoom(page, buyer.email);
+
+    await expect(page.getByText('Lote adicionado ao vivo')).toHaveCount(0);
+    await expect.poll(() => lotRequests, { timeout: 7_000 }).toBeGreaterThanOrEqual(3);
+    await expect(page.getByText('Lote adicionado ao vivo')).toBeVisible();
+  });
+
   test('shows the owner office the nominal bid history', async ({ context, page }) => {
     await setupCommonRoutes(context);
     await loginAndEnterRoom(page, auctionHouse.email);
@@ -152,5 +186,93 @@ test.describe('auction room commerce', () => {
     await expect(page.getByText('Comprador A').first()).toBeVisible();
     await expect(page.getByRole('cell', { name: 'Comprador B' })).toBeVisible();
     await expect(page.getByText(/1\.250/).first()).toBeVisible();
+  });
+
+  test('recovers a winning bid from the backend when the realtime event is missed', async ({
+    context,
+    page,
+  }) => {
+    let bidHistoryRequests = 0;
+
+    await setupCommonRoutes(context);
+    await context.unroute('**/lots/*/bids');
+    await context.route('**/lots/*/bids', (route) => {
+      bidHistoryRequests += 1;
+      return route.fulfill(json(bidHistoryRequests >= 3 ? officeHistory : []));
+    });
+    await context.route('**/sales', (route) =>
+      route.fulfill(
+        json({
+          id: 'sale-1',
+          lotId: inPistaLot.id,
+          lotCode: inPistaLot.code,
+          finalPrice: '1250',
+          buyer: { id: buyer.id, name: 'Comprador A', email: buyer.email },
+        }),
+      ),
+    );
+    await loginAndEnterRoom(page, auctionHouse.email);
+
+    const hammer = page.getByRole('button', { name: /Bater o martelo/ });
+    await expect.poll(() => bidHistoryRequests).toBeGreaterThanOrEqual(1);
+    await expect(hammer).toBeDisabled();
+
+    await expect.poll(() => bidHistoryRequests, { timeout: 7_000 }).toBeGreaterThanOrEqual(3);
+    await expect(hammer).toBeEnabled({ timeout: 7_000 });
+    await expect(page.getByText('Comprador A').first()).toBeVisible();
+
+    page.once('dialog', (dialog) => dialog.accept());
+    await hammer.click();
+    await expect(page.getByText(/Lote L-01 vendido por/)).toBeVisible();
+  });
+
+  test('keeps the winning bid available during a temporary history refresh failure', async ({
+    context,
+    page,
+  }) => {
+    let failRefresh = false;
+
+    await setupCommonRoutes(context);
+    await context.unroute('**/lots/*/bids');
+    await context.route('**/lots/*/bids', (route) =>
+      failRefresh
+        ? route.fulfill({ status: 503, body: 'temporarily unavailable' })
+        : route.fulfill(json(officeHistory)),
+    );
+    await loginAndEnterRoom(page, auctionHouse.email);
+
+    const hammer = page.getByRole('button', { name: /Bater o martelo/ });
+    await expect(hammer).toBeEnabled();
+
+    const failedRefresh = page.waitForResponse(
+      (response) => response.url().includes('/bids') && response.status() === 503,
+    );
+    failRefresh = true;
+    await failedRefresh;
+    await page.waitForTimeout(100);
+
+    await expect(hammer).toBeEnabled();
+    await expect(page.getByText('Comprador A').first()).toBeVisible();
+  });
+
+  test('does not overlap slow bid history refreshes', async ({ context, page }) => {
+    let activeRequests = 0;
+    let maximumActiveRequests = 0;
+
+    await setupCommonRoutes(context);
+    await context.unroute('**/lots/*/bids');
+    await context.route('**/lots/*/bids', async (route) => {
+      activeRequests += 1;
+      maximumActiveRequests = Math.max(maximumActiveRequests, activeRequests);
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+      await route.fulfill(json(officeHistory));
+      activeRequests -= 1;
+    });
+    await loginAndEnterRoom(page, auctionHouse.email);
+
+    await expect(page.getByRole('button', { name: /Bater o martelo/ })).toBeEnabled({
+      timeout: 8_000,
+    });
+    expect(maximumActiveRequests).toBe(1);
   });
 });

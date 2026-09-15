@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import './App.css';
 import { login, register } from './api/authApi';
@@ -71,6 +71,10 @@ import {
   validateCpfOrCnpj,
   validatePhone,
 } from './utils/brFields';
+import {
+  applyOfficeBidEvent,
+  reconcileOfficeBidHistory,
+} from './utils/officeBidHistory';
 import { Plus, Radio } from 'lucide-react';
 
 const emptyLotForm = {
@@ -444,11 +448,6 @@ function App() {
     [officeBidHistory],
   );
 
-  const inPistaLotIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    inPistaLotIdRef.current = inPistaLot?.id ?? null;
-  }, [inPistaLot?.id]);
-
   const syncSelectedStreamState = useCallback((streamState: AuctionStreamState) => {
     setSelectedStreamState(streamState);
     setAuctions((currentAuctions) =>
@@ -532,13 +531,13 @@ function App() {
     }
   }
 
-  async function refreshLotsQuietly() {
+  const refreshLotsQuietly = useCallback(async () => {
     try {
       setLots(await listLots());
     } catch {
       // mantem a ultima lista carregada se a atualizacao silenciosa falhar
     }
-  }
+  }, []);
 
   const loadAuctionHouseSales = useCallback(async () => {
     setIsLoadingSales(true);
@@ -604,12 +603,6 @@ function App() {
 
       void refreshLotsQuietly();
 
-      // Sincroniza o historico do escritorio ao (re)conectar.
-      if (isOfficeOwner && inPistaLotIdRef.current) {
-        void listLotBidHistory(inPistaLotIdRef.current)
-          .then(setOfficeBidHistory)
-          .catch(() => setOfficeBidHistory([]));
-      }
     });
 
     socket.on('bid:price-updated', (payload) => {
@@ -622,21 +615,7 @@ function App() {
 
     if (isOfficeOwner) {
       socket.on('bid:office-recorded', (payload) => {
-        setOfficeBidHistory((current) => [
-          {
-            id: payload.bidId,
-            lotId: payload.lotId,
-            amount: payload.amount,
-            status: 'WINNING',
-            createdAt: payload.createdAt,
-            bidder: payload.bidder,
-          },
-          ...current.map((bid) =>
-            bid.status === 'WINNING' && bid.lotId === payload.lotId
-              ? { ...bid, status: 'OUTBID' }
-              : bid,
-          ),
-        ]);
+        setOfficeBidHistory((current) => applyOfficeBidEvent(current, payload));
       });
     }
 
@@ -670,7 +649,38 @@ function App() {
     currentAuctionHouse,
     canManageSelectedAuction,
     loadMyWins,
+    refreshLotsQuietly,
   ]);
+
+  // Mantem a fila autoritativa sincronizada mesmo se um evento do socket for
+  // perdido. A proxima consulta so e agendada depois que a anterior termina.
+  useEffect(() => {
+    if (view !== 'auctionRoom' || !selectedAuctionId || !isAuthenticated) {
+      return;
+    }
+
+    let isCanceled = false;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const scheduleRefresh = () => {
+      refreshTimer = setTimeout(() => {
+        void refreshLotsQuietly().finally(() => {
+          if (!isCanceled) {
+            scheduleRefresh();
+          }
+        });
+      }, 2_000);
+    };
+
+    scheduleRefresh();
+
+    return () => {
+      isCanceled = true;
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+      }
+    };
+  }, [view, selectedAuctionId, isAuthenticated, refreshLotsQuietly]);
 
   // Escritorio dono: carrega o historico nominal do lote em pista e o recarrega
   // quando o lote em pista muda. Compradores nunca disparam esta busca.
@@ -690,20 +700,35 @@ function App() {
 
     const lotId = inPistaLot.id;
 
-    listLotBidHistory(lotId)
-      .then((history) => {
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const refreshOfficeBidHistory = async () => {
+      try {
+        const history = await listLotBidHistory(lotId);
+
         if (!isCanceled) {
-          setOfficeBidHistory(history);
+          setOfficeBidHistory((current) =>
+            reconcileOfficeBidHistory(current, history, lotId),
+          );
         }
-      })
-      .catch(() => {
+      } catch {
+        // Uma falha temporaria nao pode apagar um vencedor ja conhecido.
+      } finally {
         if (!isCanceled) {
-          setOfficeBidHistory([]);
+          refreshTimer = setTimeout(() => {
+            void refreshOfficeBidHistory();
+          }, 2_000);
         }
-      });
+      }
+    };
+
+    void refreshOfficeBidHistory();
 
     return () => {
       isCanceled = true;
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+      }
     };
   }, [view, canManageSelectedAuction, inPistaLot?.id]);
 
