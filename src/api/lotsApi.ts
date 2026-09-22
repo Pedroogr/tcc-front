@@ -1,5 +1,5 @@
 import { apiRequest } from './http';
-import type { Bid, CreateLotPayload, Lot } from '../types/lot';
+import type { Bid, CreateLotPayload, Lot, OfficeBid } from '../types/lot';
 
 export function listLots() {
   return apiRequest<Lot[]>('/lots');
@@ -19,9 +19,22 @@ export function updateLot(id: string, payload: Partial<CreateLotPayload>) {
   });
 }
 
+export function setLotStage(id: string, status: 'AVAILABLE' | 'IN_AUCTION') {
+  return apiRequest<Lot>(`/lots/${id}/stage`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  });
+}
+
 export function createBid(lotId: string, amount: number) {
   return apiRequest<Bid>(`/lots/${lotId}/bids`, {
     method: 'POST',
     body: JSON.stringify({ amount }),
   });
+}
+
+// Historico completo com identidade dos compradores, autorizado apenas ao
+// escritorio dono do remate (RF07).
+export function listLotBidHistory(lotId: string) {
+  return apiRequest<OfficeBid[]>(`/lots/${lotId}/bids`);
 }

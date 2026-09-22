@@ -53,3 +53,61 @@ Uma pessoa deve conseguir responder rapidamente:
 2. qual lote está ativo e quanto custa;
 3. qual é a próxima ação disponível para o papel logado;
 4. onde encontrar seus lotes, vendas, inscrições ou dados da conta.
+
+## RF06-RF10: sala em tempo real e pós-leilão (2026-09-02)
+
+Implementados na branch `redesign/tema-escuro` (sobre a correção de sessões por aba).
+
+- **Sessões isoladas por aba:** autenticação migrada de `localStorage` para
+  `sessionStorage`, permitindo comprador e escritório logados simultaneamente.
+- **RF06:** cliente único `createCommerceSocket` (em `api/socket.ts`). Enquanto a
+  sala está aberta: `auction:join`, atualização anônima de `lot.currentPrice` em
+  `bid:price-updated`; `lot:sold` marca o lote vendido e
+  `lot:winner-announced` anuncia nome, lote e valor final aos compradores; sem polling.
+- **RF07 (privacidade):** enquanto o lote recebe lances, comprador vê só o preço
+  atual — `BidPanel` e
+  `LotDetailModal` não têm histórico nem nomes. O escritório dono carrega o
+  histórico nominal (`listLotBidHistory` → `OfficeBidHistory`) e o recebe ao vivo
+  por `bid:office-recorded`; o nome do vencedor só é revelado depois da venda.
+- **RF08/RF09:** `DeclareWinnerPanel` usa o lance vencedor do histórico do
+  escritório; `lot:winner-announced` dispara o aviso aos demais compradores e
+  `sale:won` (socket privado) mantém o toast especial do vencedor e atualiza
+  "Meus arremates".
+- **RF10:** `SaleRecordList` com perspectivas `office | buyer | seller`;
+  `MyWinsPage` (responsável), nova `MySalesPage` (comprador, só para vendedor),
+  `SalesPage` (comprador+vendedor). "Minhas vendas" no `AccountMenu` aparece
+  apenas para quem tem `sellerProfile`.
+
+### Verificação executada
+
+- `npm run test:e2e` → 25 testes Playwright OK (`auth-ui`, `auction-commerce`,
+  `office-bid-history`, `post-auction`), incluindo isolamento de sessão,
+  privacidade durante os lances e anúncio do vencedor.
+- `npm run lint` → OK. `npm run check:tokens` → OK. `npm run build` → OK
+  (aviso de chunk > 500 kB é pré-existente, não é erro).
+
+## Correções dos testes manuais de 2026-09-15
+
+Os itens abaixo foram registrados a partir dos testes manuais e das capturas de
+tela feitas em 2026-09-15 e corrigidos no mesmo ciclo.
+
+### 1. Validação do passo de R$ 5 para lances
+
+- O frontend agora apresenta uma mensagem controlada e não envia valores fora
+  do passo de R$ 5.
+- O backend também rejeita esses valores antes da persistência, impedindo que
+  apareçam no histórico do escritório mesmo que a API seja chamada diretamente.
+
+### 2. Entrada direta do lote em pista
+
+- A ação **Liberar lote** foi removida do modal.
+- Lotes em rascunho, análise, aprovados ou disponíveis agora usam diretamente
+  **Colocar em pista**; lotes em pista continuam oferecendo **Retirar de pista**.
+- As duas ações usam a rota protegida `PATCH /lots/:id/stage`, exclusiva do
+  escritório dono e que impede dois lotes simultâneos em pista no mesmo remate.
+
+### 3. Expiração da fila de notificações de vencedor
+
+- Avisos públicos e privados entram em filas separadas e expiram após 8 segundos.
+- Ao expirar, o aviso ativo é removido e a fila avança automaticamente. As ações
+  **Dispensar** e **Ver meus arremates** continuam disponíveis.

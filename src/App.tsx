@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import './App.css';
 import { login, register } from './api/authApi';
@@ -18,9 +18,19 @@ import {
   validateAuctionHouseInvite,
 } from './api/auctionHousesApi';
 import { apiUrl, authStorage } from './api/http';
-import { createBid, createLot, listLots, updateLot } from './api/lotsApi';
-import { listAuctionHouseSales, listMyWins } from './api/salesApi';
-import { createNotificationSocket } from './api/socket';
+import {
+  createBid,
+  createLot,
+  listLots,
+  listLotBidHistory,
+  setLotStage,
+  updateLot,
+} from './api/lotsApi';
+import { listAuctionHouseSales, listMySales, listMyWins } from './api/salesApi';
+import {
+  createCommerceSocket,
+  type LotWinnerAnnouncedPayload,
+} from './api/socket';
 import { upsertSellerProfile } from './api/usersApi';
 import { AccountMenu } from './components/AccountMenu';
 import { AuctionRoomPage } from './pages/AuctionRoomPage';
@@ -29,6 +39,7 @@ import { HomePage } from './pages/HomePage';
 import { AccountDetailsPage } from './pages/AccountDetailsPage';
 import { CreateAuctionPage } from './pages/CreateAuctionPage';
 import { MyWinsPage } from './pages/MyWinsPage';
+import { MySalesPage } from './pages/MySalesPage';
 import { OfficeInvitePage } from './pages/OfficeInvitePage';
 import { RegisterLotPage } from './pages/RegisterLotPage';
 import { SalesPage } from './pages/SalesPage';
@@ -36,8 +47,13 @@ import { SellerProfilePage } from './pages/SellerProfilePage';
 import { Button } from './components/ui/button';
 import type { Auction, AuctionStreamState } from './types/auction';
 import type { CreateAuctionPayload } from './types/auction';
-import type { CreateLotPayload, Lot, LotImagePayload } from './types/lot';
-import type { Sale, SaleWonNotification } from './types/sale';
+import type { CreateLotPayload, Lot, LotImagePayload, OfficeBid } from './types/lot';
+import type {
+  OfficeSale,
+  SaleWonNotification,
+  SellerSale,
+  WinnerSale,
+} from './types/sale';
 import type {
   AuctionHouse,
   BuyerRegistration,
@@ -59,7 +75,15 @@ import {
   validateCpfOrCnpj,
   validatePhone,
 } from './utils/brFields';
+import {
+  applyOfficeBidEvent,
+  reconcileOfficeBidHistory,
+} from './utils/officeBidHistory';
 import { Plus, Radio } from 'lucide-react';
+
+type SaleToast =
+  | { kind: 'announcement'; payload: LotWinnerAnnouncedPayload }
+  | { kind: 'winner'; payload: SaleWonNotification };
 
 const emptyLotForm = {
   code: '',
@@ -98,6 +122,11 @@ const emptySellerProfileForm = {
   country: 'BR',
 };
 
+const emptyBuyerProfileForm = {
+  ie: '',
+  ieUf: '',
+};
+
 const emptyAuctionHouseInviteForm = {
   name: '',
   document: '',
@@ -113,6 +142,7 @@ type LotFormState = typeof emptyLotForm;
 type AuctionFormState = typeof emptyAuctionForm;
 type UserFormState = typeof emptyUserForm;
 type SellerProfileFormState = typeof emptySellerProfileForm;
+type BuyerProfileFormState = typeof emptyBuyerProfileForm;
 type AuctionHouseInviteFormState = typeof emptyAuctionHouseInviteForm;
 type View =
   | 'home'
@@ -122,7 +152,8 @@ type View =
   | 'auctionRoom'
   | 'accountDetails'
   | 'sales'
-  | 'myWins';
+  | 'myWins'
+  | 'mySales';
 type AuthMode = 'login' | 'register';
 type AuctionStatusFilter = 'ALL' | 'LIVE' | 'SCHEDULED' | 'FINISHED';
 
@@ -143,6 +174,9 @@ const PLATFORM_BID_INCREMENT = 100;
 
 // Passo das setas do campo de lance.
 const BID_STEP = 5;
+
+// Tempo suficiente para leitura sem bloquear o proximo aviso da fila.
+const WINNER_NOTIFICATION_DURATION_MS = 8_000;
 
 const showDevDocumentTools = import.meta.env.DEV;
 
@@ -210,7 +244,7 @@ function parseApiErrorMessage(error: unknown, fallback: string) {
 }
 
 function getStoredUser() {
-  const storedUser = localStorage.getItem(authStorage.userKey);
+  const storedUser = sessionStorage.getItem(authStorage.userKey);
 
   if (!storedUser) {
     return null;
@@ -219,14 +253,14 @@ function getStoredUser() {
   try {
     return JSON.parse(storedUser) as User;
   } catch {
-    localStorage.removeItem(authStorage.userKey);
-    localStorage.removeItem(authStorage.tokenKey);
+    sessionStorage.removeItem(authStorage.userKey);
+    sessionStorage.removeItem(authStorage.tokenKey);
     return null;
   }
 }
 
 function getStoredAuctionHouse() {
-  const storedAuctionHouse = localStorage.getItem(authStorage.auctionHouseKey);
+  const storedAuctionHouse = sessionStorage.getItem(authStorage.auctionHouseKey);
 
   if (!storedAuctionHouse) {
     return null;
@@ -235,9 +269,9 @@ function getStoredAuctionHouse() {
   try {
     return JSON.parse(storedAuctionHouse) as AuctionHouse;
   } catch {
-    localStorage.removeItem(authStorage.auctionHouseKey);
-    localStorage.removeItem(authStorage.tokenKey);
-    localStorage.removeItem(authStorage.actorTypeKey);
+    sessionStorage.removeItem(authStorage.auctionHouseKey);
+    sessionStorage.removeItem(authStorage.tokenKey);
+    sessionStorage.removeItem(authStorage.actorTypeKey);
     return null;
   }
 }
@@ -250,17 +284,17 @@ function getOfficeInviteTokenFromPath() {
 }
 
 function persistUserAuth(accessToken: string, user: User) {
-  localStorage.setItem(authStorage.tokenKey, accessToken);
-  localStorage.setItem(authStorage.actorTypeKey, 'USER');
-  localStorage.setItem(authStorage.userKey, JSON.stringify(user));
-  localStorage.removeItem(authStorage.auctionHouseKey);
+  sessionStorage.setItem(authStorage.tokenKey, accessToken);
+  sessionStorage.setItem(authStorage.actorTypeKey, 'USER');
+  sessionStorage.setItem(authStorage.userKey, JSON.stringify(user));
+  sessionStorage.removeItem(authStorage.auctionHouseKey);
 }
 
 function persistAuctionHouseAuth(accessToken: string, auctionHouse: AuctionHouse) {
-  localStorage.setItem(authStorage.tokenKey, accessToken);
-  localStorage.setItem(authStorage.actorTypeKey, 'AUCTION_HOUSE');
-  localStorage.setItem(authStorage.auctionHouseKey, JSON.stringify(auctionHouse));
-  localStorage.removeItem(authStorage.userKey);
+  sessionStorage.setItem(authStorage.tokenKey, accessToken);
+  sessionStorage.setItem(authStorage.actorTypeKey, 'AUCTION_HOUSE');
+  sessionStorage.setItem(authStorage.auctionHouseKey, JSON.stringify(auctionHouse));
+  sessionStorage.removeItem(authStorage.userKey);
 }
 
 function getLotStageMessage(status: string, consignmentId?: string | null) {
@@ -268,20 +302,32 @@ function getLotStageMessage(status: string, consignmentId?: string | null) {
     return 'Este lote está em pista e recebendo lances.';
   }
   if (status === 'AVAILABLE') {
-    return 'Lote liberado, aguardando ser colocado em pista.';
+    return 'Lote pronto para ser colocado em pista.';
   }
   // UNDER_REVIEW only means "awaiting confirmation" when the lot came from a
   // seller's consignment. A lot the auction house registered itself is
   // already approved, even if its stored status still says UNDER_REVIEW.
   if (status === 'UNDER_REVIEW' && consignmentId) {
-    return 'Lote enviado por um vendedor, aguardando sua confirmação.';
+    return 'Lote enviado por um vendedor; revise os dados antes de colocá-lo em pista.';
   }
-  return 'Lote pronto para ser liberado.';
+  if (['DRAFT', 'UNDER_REVIEW', 'APPROVED'].includes(status)) {
+    return 'Lote pronto para ser colocado em pista.';
+  }
+  if (status === 'SOLD') {
+    return 'Este lote já foi vendido.';
+  }
+  if (status === 'WITHDRAWN') {
+    return 'Este lote foi retirado.';
+  }
+  if (status === 'REJECTED') {
+    return 'Este lote foi recusado.';
+  }
+  return 'Nenhuma ação de pista disponível para este lote.';
 }
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() =>
-    Boolean(localStorage.getItem(authStorage.tokenKey)),
+    Boolean(sessionStorage.getItem(authStorage.tokenKey)),
   );
   const [authMode, setAuthMode] = useState<AuthMode>('register');
   const [view, setView] = useState<View>('home');
@@ -307,6 +353,8 @@ function App() {
   >('idle');
   const [isOfficeInviteEmailLocked, setIsOfficeInviteEmailLocked] = useState(false);
   const [accountType, setAccountType] = useState<UserAccountType>('BUYER');
+  const [buyerProfileForm, setBuyerProfileForm] =
+    useState<BuyerProfileFormState>(emptyBuyerProfileForm);
   const [sellerProfileForm, setSellerProfileForm] = useState<SellerProfileFormState>(
     emptySellerProfileForm,
   );
@@ -320,6 +368,8 @@ function App() {
   const [createdAuctionId, setCreatedAuctionId] = useState<string | null>(null);
   const [createdUserName, setCreatedUserName] = useState<string | null>(null);
   const [selectedAuctionId, setSelectedAuctionId] = useState<string | null>(null);
+  const selectedAuctionIdRef = useRef(selectedAuctionId);
+  const lotsRefreshSequence = useRef(0);
   const [selectedStreamState, setSelectedStreamState] =
     useState<AuctionStreamState | null>(null);
   const [selectedLotId, setSelectedLotId] = useState<string | null>(null);
@@ -333,13 +383,37 @@ function App() {
   const [currentAuctionHouse, setCurrentAuctionHouse] = useState<AuctionHouse | null>(() =>
     getStoredAuctionHouse(),
   );
-  const [auctionHouseSales, setAuctionHouseSales] = useState<Sale[]>([]);
+  const [auctionHouseSales, setAuctionHouseSales] = useState<OfficeSale[]>([]);
   const [isLoadingSales, setIsLoadingSales] = useState(false);
   const [salesError, setSalesError] = useState('');
-  const [myWins, setMyWins] = useState<Sale[]>([]);
+  const [myWins, setMyWins] = useState<WinnerSale[]>([]);
   const [isLoadingMyWins, setIsLoadingMyWins] = useState(false);
   const [myWinsError, setMyWinsError] = useState('');
-  const [winToast, setWinToast] = useState<SaleWonNotification | null>(null);
+  const [mySales, setMySales] = useState<SellerSale[]>([]);
+  const [isLoadingMySales, setIsLoadingMySales] = useState(false);
+  const [mySalesError, setMySalesError] = useState('');
+  const [winToasts, setWinToasts] = useState<SaleWonNotification[]>([]);
+  const [saleAnnouncements, setSaleAnnouncements] = useState<
+    LotWinnerAnnouncedPayload[]
+  >([]);
+  const nextWinToast = winToasts[0];
+  const nextSaleAnnouncement = saleAnnouncements[0];
+  const saleToast = useMemo<SaleToast | null>(
+    () =>
+      nextWinToast
+        ? { kind: 'winner', payload: nextWinToast }
+        : nextSaleAnnouncement
+          ? { kind: 'announcement', payload: nextSaleAnnouncement }
+          : null,
+    [nextSaleAnnouncement, nextWinToast],
+  );
+  // Historico nominal, so carregado e exibido para o escritorio dono (RF07).
+  const [officeBidHistory, setOfficeBidHistory] = useState<OfficeBid[]>([]);
+
+  useEffect(() => {
+    selectedAuctionIdRef.current = selectedAuctionId;
+    lotsRefreshSequence.current += 1;
+  }, [selectedAuctionId]);
 
   const isAuctionOwnedByCurrentOffice = useCallback(
     (auction: Auction) =>
@@ -414,22 +488,16 @@ function App() {
   const selectedAuctionHouseId =
     selectedAuction?.auctionHouseId || selectedAuction?.auctionHouse?.id || null;
 
-  const lotWinningBid = useMemo(() => {
-    if (!selectedLot?.bids?.length) {
-      return null;
-    }
-
-    return selectedLot.bids.find((bid) => bid.status === 'WINNING') ?? null;
-  }, [selectedLot]);
-
   const inPistaLot = useMemo(
     () => selectedAuctionLots.find((lot) => lot.status === 'IN_AUCTION') ?? null,
     [selectedAuctionLots],
   );
 
-  const inPistaWinningBid = useMemo(
-    () => inPistaLot?.bids?.find((bid) => bid.status === 'WINNING') ?? null,
-    [inPistaLot],
+  // Lance vencedor com identidade, derivado somente do historico do escritorio.
+  // Compradores nunca alimentam esta lista, logo nunca veem o autor do lance.
+  const officeWinningBid = useMemo(
+    () => officeBidHistory.find((bid) => bid.status === 'WINNING') ?? null,
+    [officeBidHistory],
   );
 
   const syncSelectedStreamState = useCallback((streamState: AuctionStreamState) => {
@@ -503,11 +571,15 @@ function App() {
   }
 
   async function loadLots() {
+    const refreshSequence = ++lotsRefreshSequence.current;
     setIsLoadingLots(true);
     setError('');
 
     try {
-      setLots(await listLots());
+      const loadedLots = await listLots();
+      if (refreshSequence === lotsRefreshSequence.current) {
+        setLots(loadedLots);
+      }
     } catch {
       setError('Nao foi possivel carregar os lotes agora.');
     } finally {
@@ -515,13 +587,20 @@ function App() {
     }
   }
 
-  async function refreshLotsQuietly() {
+  const refreshLotsQuietly = useCallback(async (expectedAuctionId?: string) => {
+    const refreshSequence = ++lotsRefreshSequence.current;
     try {
-      setLots(await listLots());
+      const refreshedLots = await listLots();
+      if (
+        refreshSequence === lotsRefreshSequence.current &&
+        (!expectedAuctionId || selectedAuctionIdRef.current === expectedAuctionId)
+      ) {
+        setLots(refreshedLots);
+      }
     } catch {
       // mantem a ultima lista carregada se a atualizacao silenciosa falhar
     }
-  }
+  }, []);
 
   const loadAuctionHouseSales = useCallback(async () => {
     setIsLoadingSales(true);
@@ -551,29 +630,255 @@ function App() {
     }
   }, []);
 
-  // Notificacao em tempo real: avisa o comprador quando um lance dele vence.
+  const loadMySales = useCallback(async () => {
+    setIsLoadingMySales(true);
+    setMySalesError('');
+
+    try {
+      setMySales(await listMySales());
+    } catch {
+      setMySales([]);
+      setMySalesError('Não foi possível carregar suas vendas agora.');
+    } finally {
+      setIsLoadingMySales(false);
+    }
+  }, []);
+
   useEffect(() => {
-    if (!isAuthenticated || !currentUser || currentAuctionHouse) {
+    if (!saleToast) {
       return;
     }
 
-    const socket = createNotificationSocket();
+    const toastKind = saleToast.kind;
+    const toastId =
+      toastKind === 'winner' ? saleToast.payload.saleId : saleToast.payload.lotId;
+    const timer = window.setTimeout(() => {
+      if (toastKind === 'winner') {
+        setWinToasts((current) =>
+          current[0]?.saleId === toastId ? current.slice(1) : current,
+        );
+        return;
+      }
+
+      setSaleAnnouncements((current) =>
+        current[0]?.lotId === toastId ? current.slice(1) : current,
+      );
+    }, WINNER_NOTIFICATION_DURATION_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [saleToast]);
+
+  // Cliente unico de eventos comerciais enquanto a sala esta aberta (RF06/RF09):
+  // atualiza o preco anonimo para todos, alimenta o historico so do escritorio,
+  // anuncia o vencedor apos a venda e mantem a notificacao privada de vitoria.
+  useEffect(() => {
+    if (view !== 'auctionRoom' || !selectedAuctionId || !isAuthenticated) {
+      return;
+    }
+
+    const auctionId = selectedAuctionId;
+    const isOfficeOwner = canManageSelectedAuction;
+    const isBuyer = Boolean(currentUser) && !currentAuctionHouse;
+    const socket = createCommerceSocket();
 
     socket.on('connect', () => {
-      socket.emit('notifications:join');
+      socket.emit('auction:join', { auctionId });
+
+      if (isBuyer) {
+        socket.emit('notifications:join');
+      }
+
+      void refreshLotsQuietly();
+
     });
 
-    socket.on('sale:won', (payload) => {
-      setWinToast(payload);
-      void loadMyWins();
-      void refreshLotsQuietly();
+    socket.on('bid:price-updated', (payload) => {
+      setLots((current) =>
+        current.map((lot) =>
+          lot.id === payload.lotId ? { ...lot, currentPrice: payload.amount } : lot,
+        ),
+      );
     });
+
+    socket.on('lot:stage-changed', (payload) => {
+      if (payload.auctionId !== auctionId) {
+        return;
+      }
+
+      // Evita que uma consulta iniciada antes do evento restaure o lote antigo.
+      // O payload troca a pista imediatamente; o HTTP completa os demais dados.
+      lotsRefreshSequence.current += 1;
+      setLots((current) => {
+        const withoutPreviousActiveLot = current.filter(
+          (lot) =>
+            !(
+              (lot.auctionId === auctionId || lot.auction?.id === auctionId) &&
+              lot.status === 'IN_AUCTION' &&
+              lot.id !== payload.lot?.id
+            ),
+        );
+
+        if (!payload.lot) {
+          return withoutPreviousActiveLot;
+        }
+
+        const hasLot = withoutPreviousActiveLot.some(
+          (lot) => lot.id === payload.lot?.id,
+        );
+        if (hasLot) {
+          return withoutPreviousActiveLot.map((lot) =>
+            lot.id === payload.lot?.id ? { ...lot, ...payload.lot } : lot,
+          );
+        }
+
+        return [
+          ...withoutPreviousActiveLot,
+          {
+            ...payload.lot,
+            auctionId,
+            quantity: 1,
+            createdAt: new Date().toISOString(),
+          },
+        ];
+      });
+      void refreshLotsQuietly(auctionId);
+    });
+
+    if (isOfficeOwner) {
+      socket.on('bid:office-recorded', (payload) => {
+        setOfficeBidHistory((current) => applyOfficeBidEvent(current, payload));
+      });
+    }
+
+    socket.on('lot:sold', (payload) => {
+      setLots((current) =>
+        current.map((lot) =>
+          lot.id === payload.lotId
+            ? { ...lot, status: 'SOLD', currentPrice: payload.finalPrice }
+            : lot,
+        ),
+      );
+    });
+
+    if (isBuyer) {
+      socket.on('lot:winner-announced', (payload) => {
+        setSaleAnnouncements((current) =>
+          current.some((announcement) => announcement.lotId === payload.lotId)
+            ? current
+            : [...current, payload],
+        );
+      });
+    }
+
+    if (isBuyer) {
+      socket.on('sale:won', (payload) => {
+        setWinToasts((current) =>
+          current.some((notification) => notification.saleId === payload.saleId)
+            ? current
+            : [...current, payload],
+        );
+        setSaleAnnouncements((current) =>
+          current.filter((announcement) => announcement.lotId !== payload.lotId),
+        );
+        void loadMyWins();
+        void refreshLotsQuietly();
+      });
+    }
 
     return () => {
       socket.removeAllListeners();
       socket.disconnect();
     };
-  }, [isAuthenticated, currentUser, currentAuctionHouse, loadMyWins]);
+  }, [
+    view,
+    selectedAuctionId,
+    isAuthenticated,
+    currentUser,
+    currentAuctionHouse,
+    canManageSelectedAuction,
+    loadMyWins,
+    refreshLotsQuietly,
+  ]);
+
+  // Mantem a fila autoritativa sincronizada mesmo se um evento do socket for
+  // perdido. A proxima consulta so e agendada depois que a anterior termina.
+  useEffect(() => {
+    if (view !== 'auctionRoom' || !selectedAuctionId || !isAuthenticated) {
+      return;
+    }
+
+    let isCanceled = false;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const scheduleRefresh = () => {
+      refreshTimer = setTimeout(() => {
+        void refreshLotsQuietly().finally(() => {
+          if (!isCanceled) {
+            scheduleRefresh();
+          }
+        });
+      }, 2_000);
+    };
+
+    scheduleRefresh();
+
+    return () => {
+      isCanceled = true;
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+      }
+    };
+  }, [view, selectedAuctionId, isAuthenticated, refreshLotsQuietly]);
+
+  // Escritorio dono: carrega o historico nominal do lote em pista e o recarrega
+  // quando o lote em pista muda. Compradores nunca disparam esta busca.
+  useEffect(() => {
+    let isCanceled = false;
+
+    if (view !== 'auctionRoom' || !canManageSelectedAuction || !inPistaLot?.id) {
+      queueMicrotask(() => {
+        if (!isCanceled) {
+          setOfficeBidHistory([]);
+        }
+      });
+      return () => {
+        isCanceled = true;
+      };
+    }
+
+    const lotId = inPistaLot.id;
+
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const refreshOfficeBidHistory = async () => {
+      try {
+        const history = await listLotBidHistory(lotId);
+
+        if (!isCanceled) {
+          setOfficeBidHistory((current) =>
+            reconcileOfficeBidHistory(current, history, lotId),
+          );
+        }
+      } catch {
+        // Uma falha temporaria nao pode apagar um vencedor ja conhecido.
+      } finally {
+        if (!isCanceled) {
+          refreshTimer = setTimeout(() => {
+            void refreshOfficeBidHistory();
+          }, 2_000);
+        }
+      }
+    };
+
+    void refreshOfficeBidHistory();
+
+    return () => {
+      isCanceled = true;
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+      }
+    };
+  }, [view, canManageSelectedAuction, inPistaLot?.id]);
 
   const loadAuctions = useCallback(async (includePrivateAuctions = Boolean(currentAuctionHouse)) => {
     setIsLoadingAuctions(true);
@@ -707,19 +1012,6 @@ function App() {
     };
   }, [view, currentUser, currentAuctionHouse, selectedAuctionHouseId]);
 
-  // Mantem os lances do lote em pista atualizados para todos na sala.
-  useEffect(() => {
-    if (view !== 'auctionRoom' || !inPistaLot?.id) {
-      return;
-    }
-
-    const interval = setInterval(() => {
-      void refreshLotsQuietly();
-    }, 4000);
-
-    return () => clearInterval(interval);
-  }, [view, inPistaLot?.id]);
-
   // Pre-preenche o campo de lance com o proximo valor sugerido (incremento
   // padrao da plataforma) quando o lote em pista muda.
   useEffect(() => {
@@ -727,10 +1019,8 @@ function App() {
       return;
     }
 
-    const winning = inPistaLot.bids?.find((bid) => bid.status === 'WINNING');
-    const suggested = winning
-      ? Number(winning.amount) + PLATFORM_BID_INCREMENT
-      : Number(inPistaLot.initialPrice ?? 0);
+    const currentPrice = inPistaLot.currentPrice ?? inPistaLot.initialPrice ?? 0;
+    const suggested = Number(currentPrice) + PLATFORM_BID_INCREMENT;
 
     let isCanceled = false;
     queueMicrotask(() => {
@@ -832,7 +1122,7 @@ function App() {
     }
   }
 
-  async function handleSetLotStage(nextStatus: string) {
+  async function handleSetLotStage(nextStatus: 'AVAILABLE' | 'IN_AUCTION') {
     if (!selectedLot) {
       return;
     }
@@ -841,7 +1131,7 @@ function App() {
     setError('');
 
     try {
-      await updateLot(selectedLot.id, { status: nextStatus });
+      await setLotStage(selectedLot.id, nextStatus);
       await loadLots();
     } catch {
       setError('Nao foi possivel atualizar o status do lote.');
@@ -884,8 +1174,13 @@ function App() {
 
     const amount = Number(bidAmount);
 
-    if (!bidAmount.trim() || Number.isNaN(amount)) {
+    if (!bidAmount.trim() || !Number.isFinite(amount) || amount < 0) {
       setError('Informe um valor de lance valido.');
+      return;
+    }
+
+    if (amount % BID_STEP !== 0) {
+      setError('O lance deve ser múltiplo de R$ 5.');
       return;
     }
 
@@ -893,8 +1188,14 @@ function App() {
     setError('');
 
     try {
-      await createBid(inPistaLot.id, amount);
-      await refreshLotsQuietly();
+      const bid = await createBid(inPistaLot.id, amount);
+      // Resposta segura (sem historico): atualiza so o proprio preco atual. Os
+      // demais participantes recebem a atualizacao pelo socket.
+      setLots((current) =>
+        current.map((lot) =>
+          lot.id === bid.lotId ? { ...lot, currentPrice: bid.amount } : lot,
+        ),
+      );
     } catch (submitError) {
       setError(parseApiErrorMessage(submitError, 'Nao foi possivel registrar o lance.'));
     } finally {
@@ -1010,6 +1311,16 @@ function App() {
     setSellerProfileForm((current) => ({ ...current, [field]: value }));
   }
 
+  function updateBuyerProfileField(field: keyof BuyerProfileFormState, value: string) {
+    setBuyerProfileForm((current) => ({
+      ...current,
+      [field]:
+        field === 'ie'
+          ? onlyDigits(value)
+          : value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2),
+    }));
+  }
+
   function enterAuctionRoom(auctionId: string) {
     setSelectedAuctionId(auctionId);
     setSelectedStreamState(null);
@@ -1044,6 +1355,13 @@ function App() {
       accountType,
     };
 
+    if (accountType === 'BUYER') {
+      payload.buyerProfile = {
+        ie: onlyDigits(buyerProfileForm.ie),
+        ieUf: buyerProfileForm.ieUf.trim().toUpperCase(),
+      };
+    }
+
     if (accountType === 'SELLER') {
       payload.sellerProfile = {
         farmName: sellerProfileForm.farmName.trim() || undefined,
@@ -1071,6 +1389,7 @@ function App() {
       setCurrentUser(auth.user);
       setCurrentAuctionHouse(null);
       setUserForm(emptyUserForm);
+      setBuyerProfileForm(emptyBuyerProfileForm);
       setSellerProfileForm(emptySellerProfileForm);
       setAccountType('BUYER');
       await loadAuctions(false);
@@ -1296,7 +1615,7 @@ function App() {
 
     try {
       const user = await upsertSellerProfile(payload);
-      persistUserAuth(localStorage.getItem(authStorage.tokenKey) || '', user);
+      persistUserAuth(sessionStorage.getItem(authStorage.tokenKey) || '', user);
       setCurrentUser(user);
       setSellerProfileForm(emptySellerProfileForm);
       setError('');
@@ -1309,10 +1628,10 @@ function App() {
   }
 
   function handleLogout() {
-    localStorage.removeItem(authStorage.tokenKey);
-    localStorage.removeItem(authStorage.userKey);
-    localStorage.removeItem(authStorage.auctionHouseKey);
-    localStorage.removeItem(authStorage.actorTypeKey);
+    sessionStorage.removeItem(authStorage.tokenKey);
+    sessionStorage.removeItem(authStorage.userKey);
+    sessionStorage.removeItem(authStorage.auctionHouseKey);
+    sessionStorage.removeItem(authStorage.actorTypeKey);
     setIsAuthenticated(false);
     setCreatedUserName(null);
     setCreatedLotId(null);
@@ -1325,6 +1644,11 @@ function App() {
     setSalesError('');
     setMyWins([]);
     setMyWinsError('');
+    setMySales([]);
+    setMySalesError('');
+    setWinToasts([]);
+    setSaleAnnouncements([]);
+    setOfficeBidHistory([]);
     clearAuctionThumbnail();
     setView('home');
   }
@@ -1373,6 +1697,7 @@ function App() {
         authMode={authMode}
         accountType={accountType}
         userForm={userForm}
+        buyerProfileForm={buyerProfileForm}
         sellerProfileForm={sellerProfileForm}
         isSubmitting={isSubmitting}
         error={error}
@@ -1387,6 +1712,7 @@ function App() {
         onUserPhoneChange={updateUserPhone}
         onUserDocumentChange={updateUserDocument}
         onFillDevUserCpf={fillDevUserCpf}
+        onBuyerProfileFieldChange={updateBuyerProfileField}
         onSellerProfileFieldChange={updateSellerProfileField}
       />
     );
@@ -1456,6 +1782,11 @@ function App() {
               setView('myWins');
               void loadMyWins();
             }}
+            onShowMySales={() => {
+              setError('');
+              setView('mySales');
+              void loadMySales();
+            }}
             onChangePassword={showChangePasswordPlaceholder}
             onLogout={handleLogout}
           />
@@ -1463,30 +1794,51 @@ function App() {
         </div>
       </header>
 
-      {winToast && (
+      {saleToast && (
         <div className="win-toast" role="status">
           <div className="win-toast-body">
-            <strong>Você arrematou o lote {winToast.lotCode}! 🎉</strong>
+            <strong>
+              {saleToast.kind === 'winner'
+                ? `Você arrematou o lote ${saleToast.payload.lotCode}! 🎉`
+                : `${saleToast.payload.winnerName} arrematou o lote ${saleToast.payload.lotCode}`}
+            </strong>
             <span>
-              {winToast.lotTitle} · {formatCurrency(winToast.finalPrice)}
+              {saleToast.payload.lotTitle} · {formatCurrency(saleToast.payload.finalPrice)}
             </span>
           </div>
           <div className="win-toast-actions">
-            <button
-              className="secondary-action"
-              type="button"
-              onClick={() => {
-                setWinToast(null);
-                setView('myWins');
-                void loadMyWins();
-              }}
-            >
-              Ver meus arremates
-            </button>
+            {saleToast.kind === 'winner' && (
+              <button
+                className="secondary-action"
+                type="button"
+                onClick={() => {
+                  const saleId = saleToast.payload.saleId;
+                  setWinToasts((current) =>
+                    current[0]?.saleId === saleId ? current.slice(1) : current,
+                  );
+                  setView('myWins');
+                  void loadMyWins();
+                }}
+              >
+                Ver meus arremates
+              </button>
+            )}
             <button
               className="text-action"
               type="button"
-              onClick={() => setWinToast(null)}
+              onClick={() => {
+                if (saleToast.kind === 'winner') {
+                  const saleId = saleToast.payload.saleId;
+                  setWinToasts((current) =>
+                    current[0]?.saleId === saleId ? current.slice(1) : current,
+                  );
+                } else {
+                  const lotId = saleToast.payload.lotId;
+                  setSaleAnnouncements((current) =>
+                    current[0]?.lotId === lotId ? current.slice(1) : current,
+                  );
+                }
+              }}
             >
               Dispensar
             </button>
@@ -1505,7 +1857,8 @@ function App() {
           detailImages={detailLotImages}
           error={error}
           inPistaLot={inPistaLot}
-          inPistaWinningBid={inPistaWinningBid}
+          officeBidHistory={officeBidHistory}
+          officeWinningBid={officeWinningBid}
           isBidder={Boolean(currentUser) && !currentAuctionHouse}
           isLoadingBuyerRegistrations={isLoadingBuyerRegistrations}
           isLoadingLots={isLoadingLots}
@@ -1521,7 +1874,6 @@ function App() {
               ? getLotStageMessage(selectedLot.status, selectedLot.consignmentId)
               : ''
           }
-          selectedLotWinningBid={lotWinningBid}
           streamState={selectedAuctionStreamState}
           onBack={() => setView('home')}
           onBidAmountChange={setBidAmount}
@@ -1594,6 +1946,14 @@ function App() {
           sales={myWins}
           onBack={() => setView('home')}
           onRetry={() => void loadMyWins()}
+        />
+      ) : view === 'mySales' ? (
+        <MySalesPage
+          error={mySalesError}
+          isLoading={isLoadingMySales}
+          sales={mySales}
+          onBack={() => setView('home')}
+          onRetry={() => void loadMySales()}
         />
       ) : view === 'registerLot' ? (
         <RegisterLotPage

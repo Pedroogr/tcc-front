@@ -1,5 +1,6 @@
 import { io, type Socket } from 'socket.io-client';
 import { apiUrl, authStorage } from './http';
+import type { BidSource } from '../types/lot';
 
 export type StreamSignalDescription = RTCSessionDescriptionInit;
 export type StreamIceCandidate = RTCIceCandidateInit;
@@ -54,7 +55,7 @@ type ClientToServerEvents = {
 export type StreamSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
 export function createStreamSocket(): StreamSocket {
-  const token = localStorage.getItem(authStorage.tokenKey);
+  const token = sessionStorage.getItem(authStorage.tokenKey);
 
   return io(apiUrl, {
     auth: token ? { token } : undefined,
@@ -74,26 +75,83 @@ export type SaleWonPayload = {
   finalPrice: string;
 };
 
-type NotificationServerToClientEvents = {
-  'notifications:joined': (payload: { actorId: string }) => void;
-  'sale:won': (payload: SaleWonPayload) => void;
-  'stream:error': (payload: { message: string }) => void;
+// Atualizacao anonima de preco: sem identidade de quem lancou (RF06).
+export type BidPriceUpdatedPayload = {
+  lotId: string;
+  amount: string;
+  createdAt: string;
 };
 
-type NotificationClientToServerEvents = {
+// Lance detalhado, entregue somente a sala :office do escritorio dono (RF07).
+export type OfficeBidRecordedPayload = {
+  bidId: string;
+  lotId: string;
+  amount: string;
+  createdAt: string;
+  source: BidSource;
+  bidder: { id: string; name: string };
+};
+
+export type LotSoldPayload = {
+  lotId: string;
+  finalPrice: string;
+  soldAt: string;
+};
+
+export type LotWinnerAnnouncedPayload = LotSoldPayload & {
+  lotCode: string;
+  lotTitle: string;
+  winnerName: string;
+};
+
+export type LotStageChangedPayload = {
+  auctionId: string;
+  lot: {
+    id: string;
+    code: string;
+    title: string;
+    status: string;
+    currentPrice?: string | null;
+    nextMinimumBid?: string | null;
+  } | null;
+};
+
+type CommerceServerToClientEvents = {
+  'bid:price-updated': (payload: BidPriceUpdatedPayload) => void;
+  'bid:office-recorded': (payload: OfficeBidRecordedPayload) => void;
+  'lot:sold': (payload: LotSoldPayload) => void;
+  'lot:winner-announced': (payload: LotWinnerAnnouncedPayload) => void;
+  'sale:won': (payload: SaleWonPayload) => void;
+  'lot:stage-changed': (payload: LotStageChangedPayload) => void;
+  'commerce:error': (payload: { message: string }) => void;
+};
+
+type CommerceClientToServerEvents = {
+  'auction:join': (payload: { auctionId: string }) => void;
   'notifications:join': () => void;
 };
 
-export type NotificationSocket = Socket<
-  NotificationServerToClientEvents,
-  NotificationClientToServerEvents
+export type CommerceSocket = Socket<
+  CommerceServerToClientEvents,
+  CommerceClientToServerEvents
 >;
 
-export function createNotificationSocket(): NotificationSocket {
-  const token = localStorage.getItem(authStorage.tokenKey);
+// Cliente unico de eventos comerciais: preco em tempo real, historico do
+// escritorio, lote vendido, anuncio aos compradores e notificacao privada.
+export function createCommerceSocket(): CommerceSocket {
+  const token = sessionStorage.getItem(authStorage.tokenKey);
 
   return io(apiUrl, {
     auth: token ? { token } : undefined,
+    reconnectionAttempts: 6,
+    reconnectionDelay: 800,
+    transports: ['websocket', 'polling'],
+  });
+}
+
+export function createOperatorCommerceSocket(token: string): CommerceSocket {
+  return io(apiUrl, {
+    auth: { token },
     reconnectionAttempts: 6,
     reconnectionDelay: 800,
     transports: ['websocket', 'polling'],

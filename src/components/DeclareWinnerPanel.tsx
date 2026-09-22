@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { declareWinner } from '../api/salesApi';
-import type { Bid, Lot } from '../types/lot';
-import type { Sale } from '../types/sale';
+import type { Lot, OfficeBid } from '../types/lot';
+import type { OfficeSale } from '../types/sale';
 
 type DeclareWinnerPanelProps = {
   inPistaLot: Lot | null;
-  winningBid: Bid | null;
+  winningBid: OfficeBid | null;
   onDeclared: () => void | Promise<void>;
 };
 
@@ -42,7 +42,7 @@ export function DeclareWinnerPanel({
 }: DeclareWinnerPanelProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [sale, setSale] = useState<Sale | null>(null);
+  const [sale, setSale] = useState<OfficeSale | null>(null);
 
   // Limpa a venda exibida ao trocar o lote em pista.
   useEffect(() => {
@@ -58,7 +58,7 @@ export function DeclareWinnerPanel({
       return;
     }
 
-    const leaderName = winningBid.bidder?.name || 'o comprador líder';
+    const leaderName = winningBid.bidder.name || 'o comprador líder';
     const confirmed = window.confirm(
       `Bater o martelo e vender o lote ${inPistaLot.code} para ${leaderName} por ${formatCurrency(
         winningBid.amount,
@@ -97,29 +97,23 @@ export function DeclareWinnerPanel({
       {sale ? (
         <div className="winner-result">
           <p className="winner-result-title">
-            Lote {sale.lot?.code ?? inPistaLot?.code} vendido por{' '}
+            Lote {sale.lotCode ?? inPistaLot?.code} vendido por{' '}
             <strong>{formatCurrency(sale.finalPrice)}</strong>.
           </p>
           <div className="winner-buyer">
             <span className="eyebrow">Comprador vencedor</span>
-            <strong>{sale.buyer?.name ?? 'Comprador'}</strong>
+            <strong>{sale.buyer.name}</strong>
             <dl className="winner-buyer-contact">
-              {sale.buyer?.email && (
+              {sale.buyer.email && (
                 <div>
                   <dt>E-mail</dt>
                   <dd>{sale.buyer.email}</dd>
                 </div>
               )}
-              {sale.buyer?.phone && (
+              {sale.buyer.phone && (
                 <div>
                   <dt>Telefone</dt>
                   <dd>{sale.buyer.phone}</dd>
-                </div>
-              )}
-              {sale.buyer?.document && (
-                <div>
-                  <dt>Documento</dt>
-                  <dd>{sale.buyer.document}</dd>
                 </div>
               )}
             </dl>
@@ -143,7 +137,7 @@ export function DeclareWinnerPanel({
             </strong>
             {winningBid ? (
               <span className="bid-current">
-                Líder atual: {winningBid.bidder?.name || 'Comprador'} ·{' '}
+                Líder atual: {winningBid.bidder.name || 'Comprador'} ·{' '}
                 {formatCurrency(winningBid.amount)}
               </span>
             ) : (

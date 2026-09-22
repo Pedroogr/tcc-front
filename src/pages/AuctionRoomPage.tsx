@@ -1,11 +1,13 @@
 import type { ChangeEvent, FormEvent } from 'react';
 import { ChevronLeft, Plus } from 'lucide-react';
 import type { Auction, AuctionStreamState } from '@/types/auction';
-import type { Bid, Lot } from '@/types/lot';
+import type { Lot, OfficeBid } from '@/types/lot';
 import type { BuyerRegistration } from '@/types/user';
 import { AuctionBroadcastControls } from '@/components/AuctionBroadcastControls';
 import { AuctionStreamPlayer } from '@/components/AuctionStreamPlayer';
 import { DeclareWinnerPanel } from '@/components/DeclareWinnerPanel';
+import { OfficeBidHistory } from '@/components/OfficeBidHistory';
+import { OperatorAccessPanel } from '@/components/OperatorAccessPanel';
 import type { LotImageItem } from '@/components/LotImageInput';
 import { Button } from '@/components/ui/button';
 import { Status } from '@/design/primitives/Status';
@@ -38,7 +40,9 @@ type AuctionRoomPageProps = {
   canManage: boolean;
   isBidder: boolean;
   inPistaLot: Lot | null;
-  inPistaWinningBid: Bid | null;
+  // Historico nominal e lance vencedor: so preenchidos para o escritorio dono.
+  officeBidHistory: OfficeBid[];
+  officeWinningBid: OfficeBid | null;
   bidAmount: string;
   bidStep: number;
   myRegistration: BuyerRegistration | null | undefined;
@@ -47,7 +51,6 @@ type AuctionRoomPageProps = {
   createdLotId: string | null;
 
   selectedLot: Lot | null;
-  selectedLotWinningBid: Bid | null;
   selectedLotStageMessage: string;
   detailImages: PendingImage[];
 
@@ -86,7 +89,8 @@ export function AuctionRoomPage({
   canManage,
   isBidder,
   inPistaLot,
-  inPistaWinningBid,
+  officeBidHistory,
+  officeWinningBid,
   bidAmount,
   bidStep,
   myRegistration,
@@ -94,7 +98,6 @@ export function AuctionRoomPage({
   error,
   createdLotId,
   selectedLot,
-  selectedLotWinningBid,
   selectedLotStageMessage,
   detailImages,
   lotForm,
@@ -126,7 +129,7 @@ export function AuctionRoomPage({
     streamState?.stream?.status === 'LIVE' || auction?.stream?.status === 'LIVE';
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="mx-auto flex w-full max-w-[1360px] flex-col gap-5 px-4 py-5 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex min-w-0 items-center gap-4">
           <Button size="sm" type="button" variant="outline" onClick={onBack}>
@@ -183,9 +186,15 @@ export function AuctionRoomPage({
           {canManage && (
             <DeclareWinnerPanel
               inPistaLot={inPistaLot}
-              winningBid={inPistaWinningBid}
+              winningBid={officeWinningBid}
               onDeclared={onWinnerDeclared}
             />
+          )}
+
+          {canManage && <OfficeBidHistory bids={officeBidHistory} />}
+
+          {canManage && auction && (
+            <OperatorAccessPanel auctionId={auction.id} />
           )}
 
           {canManage && (
@@ -217,7 +226,6 @@ export function AuctionRoomPage({
               inPistaLot={inPistaLot}
               isSubmitting={isSubmitting}
               registration={myRegistration}
-              winningBid={inPistaWinningBid}
               onBidAmountChange={onBidAmountChange}
               onRequestApproval={onRequestApproval}
               onStepBid={onStepBid}
@@ -244,7 +252,6 @@ export function AuctionRoomPage({
           pendingImages={detailImages}
           resolveMediaUrl={resolveMediaUrl}
           stageMessage={selectedLotStageMessage}
-          winningBid={selectedLotWinningBid}
           onClose={onCloseLotDetail}
           onPendingImagesChange={onDetailImagesChange}
           onRemovePendingImage={onRemoveDetailImage}

@@ -200,6 +200,12 @@ export function RoomSidePanel({
                     <small className="truncate text-xs text-muted-foreground">
                       {registration.buyer?.email}
                     </small>
+                    <small className="truncate text-xs text-muted-foreground">
+                      {registration.buyer?.buyerProfile?.ie &&
+                      registration.buyer.buyerProfile.ieUf
+                        ? `IE ${registration.buyer.buyerProfile.ie} · ${registration.buyer.buyerProfile.ieUf}`
+                        : 'IE não informada'}
+                    </small>
                   </div>
                   <span className="shrink-0 text-[11.5px] text-text-subtle">
                     {formatRegistrationStatus(registration.status)}
@@ -210,6 +216,10 @@ export function RoomSidePanel({
                   <div className="flex gap-2">
                     <Button
                       className="flex-grow"
+                      disabled={
+                        !registration.buyer?.buyerProfile?.ie ||
+                        !registration.buyer.buyerProfile.ieUf
+                      }
                       size="sm"
                       type="button"
                       onClick={() => onReviewRegistration(registration.id, 'APPROVED')}

@@ -11,7 +11,7 @@ export async function apiRequest<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const token = localStorage.getItem(authStorage.tokenKey);
+  const token = sessionStorage.getItem(authStorage.tokenKey);
   const isFormData = options.body instanceof FormData;
 
   const response = await fetch(`${apiUrl}${path}`, {
