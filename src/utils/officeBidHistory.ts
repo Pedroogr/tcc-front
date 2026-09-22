@@ -14,6 +14,7 @@ export function applyOfficeBidEvent(
       amount: payload.amount,
       status: 'WINNING',
       createdAt: payload.createdAt,
+      source: payload.source,
       bidder: payload.bidder,
     },
     ...previousBids.map((bid) =>

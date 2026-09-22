@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import './App.css';
 import { login, register } from './api/authApi';
@@ -368,6 +368,8 @@ function App() {
   const [createdAuctionId, setCreatedAuctionId] = useState<string | null>(null);
   const [createdUserName, setCreatedUserName] = useState<string | null>(null);
   const [selectedAuctionId, setSelectedAuctionId] = useState<string | null>(null);
+  const selectedAuctionIdRef = useRef(selectedAuctionId);
+  const lotsRefreshSequence = useRef(0);
   const [selectedStreamState, setSelectedStreamState] =
     useState<AuctionStreamState | null>(null);
   const [selectedLotId, setSelectedLotId] = useState<string | null>(null);
@@ -407,6 +409,11 @@ function App() {
   );
   // Historico nominal, so carregado e exibido para o escritorio dono (RF07).
   const [officeBidHistory, setOfficeBidHistory] = useState<OfficeBid[]>([]);
+
+  useEffect(() => {
+    selectedAuctionIdRef.current = selectedAuctionId;
+    lotsRefreshSequence.current += 1;
+  }, [selectedAuctionId]);
 
   const isAuctionOwnedByCurrentOffice = useCallback(
     (auction: Auction) =>
@@ -576,9 +583,16 @@ function App() {
     }
   }
 
-  const refreshLotsQuietly = useCallback(async () => {
+  const refreshLotsQuietly = useCallback(async (expectedAuctionId?: string) => {
+    const refreshSequence = ++lotsRefreshSequence.current;
     try {
-      setLots(await listLots());
+      const refreshedLots = await listLots();
+      if (
+        refreshSequence === lotsRefreshSequence.current &&
+        (!expectedAuctionId || selectedAuctionIdRef.current === expectedAuctionId)
+      ) {
+        setLots(refreshedLots);
+      }
     } catch {
       // mantem a ultima lista carregada se a atualizacao silenciosa falhar
     }
@@ -680,6 +694,50 @@ function App() {
           lot.id === payload.lotId ? { ...lot, currentPrice: payload.amount } : lot,
         ),
       );
+    });
+
+    socket.on('lot:stage-changed', (payload) => {
+      if (payload.auctionId !== auctionId) {
+        return;
+      }
+
+      // Evita que uma consulta iniciada antes do evento restaure o lote antigo.
+      // O payload troca a pista imediatamente; o HTTP completa os demais dados.
+      lotsRefreshSequence.current += 1;
+      setLots((current) => {
+        const withoutPreviousActiveLot = current.filter(
+          (lot) =>
+            !(
+              (lot.auctionId === auctionId || lot.auction?.id === auctionId) &&
+              lot.status === 'IN_AUCTION' &&
+              lot.id !== payload.lot?.id
+            ),
+        );
+
+        if (!payload.lot) {
+          return withoutPreviousActiveLot;
+        }
+
+        const hasLot = withoutPreviousActiveLot.some(
+          (lot) => lot.id === payload.lot?.id,
+        );
+        if (hasLot) {
+          return withoutPreviousActiveLot.map((lot) =>
+            lot.id === payload.lot?.id ? { ...lot, ...payload.lot } : lot,
+          );
+        }
+
+        return [
+          ...withoutPreviousActiveLot,
+          {
+            ...payload.lot,
+            auctionId,
+            quantity: 1,
+            createdAt: new Date().toISOString(),
+          },
+        ];
+      });
+      void refreshLotsQuietly(auctionId);
     });
 
     if (isOfficeOwner) {

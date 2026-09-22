@@ -41,6 +41,7 @@ export function OfficeBidHistory({ bids }: OfficeBidHistoryProps) {
               <th className="px-4.5 py-2.5 font-medium">Comprador</th>
               <th className="px-4.5 py-2.5 font-medium">Valor</th>
               <th className="px-4.5 py-2.5 font-medium">Horário</th>
+              <th className="px-4.5 py-2.5 font-medium">Origem</th>
               <th className="px-4.5 py-2.5 font-medium">Situação</th>
             </tr>
           </thead>
@@ -55,6 +56,9 @@ export function OfficeBidHistory({ bids }: OfficeBidHistoryProps) {
                 </td>
                 <td className="px-4.5 py-2.5 tabular-nums text-muted-foreground">
                   {formatTime(bid.createdAt)}
+                </td>
+                <td className="px-4.5 py-2.5 text-[11.5px] text-text-subtle">
+                  {bid.source === 'ON_SITE' ? 'Presencial' : 'Online'}
                 </td>
                 <td className="px-4.5 py-2.5 text-[11.5px] text-text-subtle">
                   {formatBidStatus(bid.status)}

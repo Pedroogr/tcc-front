@@ -12,6 +12,7 @@ const olderBid: OfficeBid = {
   status: 'OUTBID',
   createdAt: '2026-09-03T12:00:00.000Z',
   bidder: { id: 'buyer-old', name: 'Comprador anterior' },
+  source: 'ONLINE',
 };
 
 const winningBid: OfficeBid = {
@@ -21,6 +22,7 @@ const winningBid: OfficeBid = {
   status: 'WINNING',
   createdAt: '2026-09-03T12:01:00.000Z',
   bidder: { id: 'buyer-winning', name: 'Comprador vencedor' },
+  source: 'ON_SITE',
 };
 
 test('does not duplicate a bid received by HTTP before the same socket event', () => {
@@ -29,11 +31,13 @@ test('does not duplicate a bid received by HTTP before the same socket event', (
     lotId: winningBid.lotId,
     amount: String(winningBid.amount),
     createdAt: winningBid.createdAt,
+    source: 'ON_SITE',
     bidder: winningBid.bidder,
   });
 
   expect(result.map((bid) => bid.id)).toEqual(['bid-winning', 'bid-old']);
   expect(result[0].status).toBe('WINNING');
+  expect(result[0].source).toBe('ON_SITE');
 });
 
 test('does not replace a newer socket bid with an older HTTP snapshot', () => {

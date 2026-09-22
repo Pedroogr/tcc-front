@@ -94,6 +94,7 @@ const officeHistory = [
     amount: '1250',
     status: 'WINNING',
     createdAt: TS,
+    source: 'ONLINE',
     bidder: { id: 'buyer-a', name: 'Comprador A' },
   },
   {
@@ -102,6 +103,7 @@ const officeHistory = [
     amount: '1000',
     status: 'OUTBID',
     createdAt: TS,
+    source: 'ON_SITE',
     bidder: { id: 'buyer-b', name: 'Comprador B' },
   },
 ];
@@ -490,8 +492,88 @@ test.describe('auction room commerce', () => {
     // Comprador A aparece no painel de vencedor e no historico; B so no historico.
     await expect(page.getByText('Comprador A').first()).toBeVisible();
     await expect(page.getByRole('cell', { name: 'Comprador B' })).toBeVisible();
+    await expect(page.getByRole('cell', { name: 'Online' })).toBeVisible();
+    await expect(page.getByRole('cell', { name: 'Presencial' })).toBeVisible();
     await expect(page.getByText(/1\.250/).first()).toBeVisible();
     await expect(page.getByText('IE 224365879 · RS')).toBeVisible();
+  });
+
+  test('switches the regular room immediately when the stage changes', async ({
+    context,
+    page,
+  }) => {
+    let stageChanged = false;
+    const emitCommerceEvent = await setupCommerceSocket(context);
+    await setupCommonRoutes(context);
+    await context.unroute('**/lots');
+    await context.route('**/lots', async (route) => {
+      if (stageChanged) {
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+      }
+      return route.fulfill(
+        json(
+          stageChanged
+            ? [
+                { ...inPistaLot, status: 'SOLD' },
+                { ...newlyCreatedLot, status: 'IN_AUCTION' },
+              ]
+            : [inPistaLot, newlyCreatedLot],
+        ),
+      );
+    });
+    await loginAndEnterRoom(page, buyer.email);
+
+    await expect(
+      page.getByRole('heading', { name: 'Lote em Pista', level: 2 }),
+    ).toBeVisible();
+    stageChanged = true;
+    await emitCommerceEvent('lot:stage-changed', {
+      auctionId: auction.id,
+      lot: {
+        id: newlyCreatedLot.id,
+        code: newlyCreatedLot.code,
+        title: newlyCreatedLot.title,
+        status: 'IN_AUCTION',
+        currentPrice: newlyCreatedLot.initialPrice,
+        nextMinimumBid: '1900',
+      },
+    });
+
+    await expect(
+      page.getByRole('heading', { name: 'Lote adicionado ao vivo', level: 2 }),
+    ).toBeVisible({ timeout: 1_000 });
+  });
+
+  test('removes the active lot immediately when the stage becomes empty', async ({
+    context,
+    page,
+  }) => {
+    let stageEmpty = false;
+    const emitCommerceEvent = await setupCommerceSocket(context);
+    await setupCommonRoutes(context);
+    await context.unroute('**/lots');
+    await context.route('**/lots', async (route) => {
+      if (stageEmpty) {
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+      }
+      return route.fulfill(
+        json(stageEmpty ? [{ ...inPistaLot, status: 'SOLD' }] : [inPistaLot]),
+      );
+    });
+    await loginAndEnterRoom(page, buyer.email);
+
+    await expect(
+      page.getByRole('heading', { name: 'Lote em Pista', level: 2 }),
+    ).toBeVisible();
+    stageEmpty = true;
+    await emitCommerceEvent('lot:stage-changed', {
+      auctionId: auction.id,
+      lot: null,
+    });
+
+    await expect(page.getByText('Nenhum lote em pista no momento.')).toBeVisible({
+      timeout: 1_000,
+    });
   });
 
   test('recovers a winning bid from the backend when the realtime event is missed', async ({

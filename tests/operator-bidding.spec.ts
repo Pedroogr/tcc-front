@@ -212,8 +212,7 @@ test.describe('operator bidding', () => {
     activeLot = lotThree;
     await emitOperatorEvent('lot:stage-changed', {
       auctionId: 'auction-1',
-      lotId: 'lot-3',
-      status: 'IN_AUCTION',
+      lot: lotThree,
     });
 
     await expect(page.getByRole('heading', { name: 'Lote 3' })).toBeVisible();

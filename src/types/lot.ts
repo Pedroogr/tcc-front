@@ -33,6 +33,8 @@ export type Bid = {
   createdAt: string;
 };
 
+export type BidSource = 'ONLINE' | 'ON_SITE';
+
 // Lance detalhado, visivel apenas ao escritorio dono via GET /lots/:id/bids.
 export type OfficeBid = {
   id: string;
@@ -44,6 +46,7 @@ export type OfficeBid = {
     id: string;
     name: string;
   };
+  source?: BidSource;
 };
 
 export type LotMedia = {

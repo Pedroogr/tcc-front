@@ -1,5 +1,6 @@
 import { io, type Socket } from 'socket.io-client';
 import { apiUrl, authStorage } from './http';
+import type { BidSource } from '../types/lot';
 
 export type StreamSignalDescription = RTCSessionDescriptionInit;
 export type StreamIceCandidate = RTCIceCandidateInit;
@@ -87,6 +88,7 @@ export type OfficeBidRecordedPayload = {
   lotId: string;
   amount: string;
   createdAt: string;
+  source: BidSource;
   bidder: { id: string; name: string };
 };
 
@@ -104,8 +106,14 @@ export type LotWinnerAnnouncedPayload = LotSoldPayload & {
 
 export type LotStageChangedPayload = {
   auctionId: string;
-  lotId: string;
-  status: string;
+  lot: {
+    id: string;
+    code: string;
+    title: string;
+    status: string;
+    currentPrice?: string | null;
+    nextMinimumBid?: string | null;
+  } | null;
 };
 
 type CommerceServerToClientEvents = {
