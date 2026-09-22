@@ -296,4 +296,86 @@ test.describe('operator bidding', () => {
     await expect(page.getByLabel('Buscar comprador')).toHaveValue('');
     await expect(page.getByLabel('Valor do lance')).toHaveValue('');
   });
+
+  test('keeps bidding blocked when authoritative reconciliation fails', async ({
+    context,
+    page,
+  }) => {
+    let failSession = false;
+    let bidPosts = 0;
+
+    await storeOperatorToken(context);
+    const emitOperatorEvent = await setupOperatorSocket(context);
+    await context.route('http://localhost:3000/operator/session', (route) =>
+      failSession
+        ? route.fulfill(json({ message: 'temporarily unavailable' }, 503))
+        : route.fulfill(json(session(lotTwo))),
+    );
+    await context.route(/http:\/\/localhost:3000\/operator\/buyers\?.*/, (route) =>
+      route.fulfill(
+        json([{ id: 'buyer-1', name: 'Maria Silva', documentLast4: '1234' }]),
+      ),
+    );
+    await context.route('http://localhost:3000/operator/bids', (route) => {
+      bidPosts += 1;
+      return route.fulfill(json({ id: 'bid-1' }));
+    });
+
+    await page.goto('/operator');
+    await expect(page.getByRole('heading', { name: 'Lote 2' })).toBeVisible();
+    await page.getByLabel('Buscar comprador').fill('Maria');
+    await page.getByRole('button', { name: 'Maria Silva · final 1234' }).click();
+    await page.getByLabel('Valor do lance').fill('1200');
+
+    failSession = true;
+    await emitOperatorEvent('lot:stage-changed', {
+      auctionId: 'auction-1',
+      lot: lotTwo,
+    });
+
+    await expect(page.getByText('Sincronização indisponível')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Revisar lance' })).toBeDisabled();
+    expect(bidPosts).toBe(0);
+  });
+
+  test('refreshes and clears stale input when the minimum bid increases', async ({
+    context,
+    page,
+  }) => {
+    let activeLot = lotTwo;
+
+    await storeOperatorToken(context);
+    await setupOperatorSocket(context);
+    await context.route('http://localhost:3000/operator/session', (route) =>
+      route.fulfill(json(session(activeLot))),
+    );
+    await context.route(/http:\/\/localhost:3000\/operator\/buyers\?.*/, (route) =>
+      route.fulfill(
+        json([{ id: 'buyer-1', name: 'Maria Silva', documentLast4: '1234' }]),
+      ),
+    );
+    await context.route('http://localhost:3000/operator/bids', async (route) => {
+      activeLot = {
+        ...lotTwo,
+        currentPrice: '1200',
+        nextMinimumBid: '1300',
+      };
+      await route.fulfill(json({ message: 'Lance minimo para este lote e 1300' }, 400));
+    });
+
+    await page.goto('/operator');
+    await expect(page.getByRole('heading', { name: 'Lote 2' })).toBeVisible();
+    await page.getByLabel('Buscar comprador').fill('Maria');
+    await page.getByRole('button', { name: 'Maria Silva · final 1234' }).click();
+    await page.getByLabel('Valor do lance').fill('1200');
+    await page.getByRole('button', { name: 'Revisar lance' }).click();
+    await page.getByRole('button', { name: 'Confirmar lance' }).click();
+
+    await expect(
+      page.getByText('O valor mínimo mudou. Confira o valor atual antes de lançar.'),
+    ).toBeVisible();
+    await expect(page.getByText(/R\$\s*1\.300/).first()).toBeVisible();
+    await expect(page.getByLabel('Buscar comprador')).toHaveValue('');
+    await expect(page.getByLabel('Valor do lance')).toHaveValue('');
+  });
 });

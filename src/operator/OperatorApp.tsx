@@ -20,6 +20,7 @@ export function OperatorApp() {
   const [notice, setNotice] = useState('');
   const requestSequence = useRef(0);
   const pendingRequests = useRef(0);
+  const latestRefreshSucceeded = useRef(false);
 
   const logout = useCallback(() => {
     sessionStorage.removeItem(operatorStorage.tokenKey);
@@ -38,6 +39,7 @@ export function OperatorApp() {
     }
 
     const requestId = ++requestSequence.current;
+    latestRefreshSucceeded.current = false;
     pendingRequests.current += 1;
     setIsSyncing(true);
     try {
@@ -45,6 +47,7 @@ export function OperatorApp() {
       if (requestId === requestSequence.current) {
         setSession(nextSession);
         setLoadError('');
+        latestRefreshSucceeded.current = true;
       }
       return nextSession;
     } catch (error) {
@@ -52,13 +55,16 @@ export function OperatorApp() {
         logout();
         return null;
       }
-      setLoadError('Não foi possível sincronizar o lote em pista.');
+      if (requestId === requestSequence.current) {
+        setLoadError('Não foi possível sincronizar o lote em pista.');
+        latestRefreshSucceeded.current = false;
+      }
       return null;
     } finally {
       setIsLoading(false);
       pendingRequests.current = Math.max(0, pendingRequests.current - 1);
       if (pendingRequests.current === 0) {
-        setIsSyncing(false);
+        setIsSyncing(!latestRefreshSucceeded.current);
       }
     }
   }, [logout, token]);
@@ -88,10 +94,13 @@ export function OperatorApp() {
     setToken(result.accessToken);
   }
 
-  const handleLotConflict = useCallback(async () => {
-    setNotice('O lote em pista mudou. Confira o lote atual antes de lançar.');
-    return refreshSession();
-  }, [refreshSession]);
+  const handleAuthoritativeConflict = useCallback(
+    async (message: string) => {
+      setNotice(message);
+      return refreshSession();
+    },
+    [refreshSession],
+  );
 
   if (!token) {
     return <OperatorLoginPage onLogin={handleLogin} />;
@@ -116,9 +125,10 @@ export function OperatorApp() {
       token={token}
       session={session}
       isSyncing={isSyncing}
+      syncError={loadError}
       notice={notice}
       onRefresh={refreshSession}
-      onLotConflict={handleLotConflict}
+      onAuthoritativeConflict={handleAuthoritativeConflict}
       onClearNotice={() => setNotice('')}
       onLogout={logout}
     />

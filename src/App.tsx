@@ -571,11 +571,15 @@ function App() {
   }
 
   async function loadLots() {
+    const refreshSequence = ++lotsRefreshSequence.current;
     setIsLoadingLots(true);
     setError('');
 
     try {
-      setLots(await listLots());
+      const loadedLots = await listLots();
+      if (refreshSequence === lotsRefreshSequence.current) {
+        setLots(loadedLots);
+      }
     } catch {
       setError('Nao foi possivel carregar os lotes agora.');
     } finally {

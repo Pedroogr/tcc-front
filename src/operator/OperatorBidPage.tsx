@@ -29,9 +29,10 @@ type OperatorBidPageProps = {
   token: string;
   session: OperatorSession;
   isSyncing: boolean;
+  syncError: string;
   notice: string;
   onRefresh: () => Promise<OperatorSession | null>;
-  onLotConflict: () => Promise<OperatorSession | null>;
+  onAuthoritativeConflict: (message: string) => Promise<OperatorSession | null>;
   onClearNotice: () => void;
   onLogout: () => void;
 };
@@ -56,9 +57,10 @@ export function OperatorBidPage({
   token,
   session,
   isSyncing,
+  syncError,
   notice,
   onRefresh,
-  onLotConflict,
+  onAuthoritativeConflict,
   onClearNotice,
   onLogout,
 }: OperatorBidPageProps) {
@@ -203,7 +205,18 @@ export function OperatorBidPage({
         setSelectedBuyer(null);
         setQuery('');
         setAmount('');
-        await onLotConflict();
+        await onAuthoritativeConflict(
+          'O lote em pista mudou. Confira o lote atual antes de lançar.',
+        );
+        return;
+      }
+      if (requestError instanceof OperatorApiError && requestError.status === 400) {
+        setSelectedBuyer(null);
+        setQuery('');
+        setAmount('');
+        await onAuthoritativeConflict(
+          'O valor mínimo mudou. Confira o valor atual antes de lançar.',
+        );
         return;
       }
       setError(
@@ -234,18 +247,24 @@ export function OperatorBidPage({
       <div
         role="status"
         className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
-          online && connected
+          online && connected && !syncError
             ? 'border-success/30 bg-success/10 text-success'
             : 'border-destructive/30 bg-destructive/10 text-destructive'
         }`}
       >
-        {online && connected ? (
+        {online && connected && !syncError ? (
           <Wifi aria-hidden="true" className="size-4" />
         ) : (
           <WifiOff aria-hidden="true" className="size-4" />
         )}
-        {!online ? 'Sem conexão' : connected ? 'Sincronizado' : 'Reconectando…'}
-        {isSyncing && online ? ' · atualizando' : ''}
+        {!online
+          ? 'Sem conexão'
+          : !connected
+            ? 'Reconectando…'
+            : syncError
+              ? 'Sincronização indisponível'
+              : 'Sincronizado'}
+        {isSyncing && online && !syncError ? ' · atualizando' : ''}
       </div>
 
       {lot ? (

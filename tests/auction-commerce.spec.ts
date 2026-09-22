@@ -503,12 +503,25 @@ test.describe('auction room commerce', () => {
     page,
   }) => {
     let stageChanged = false;
+    let holdNextOldRequest = false;
+    let resolveStaleRequestStarted!: () => void;
+    const staleRequestStarted = new Promise<void>((resolve) => {
+      resolveStaleRequestStarted = resolve;
+    });
+    let releaseStaleRequests!: () => void;
+    const staleRequestsReleased = new Promise<void>((resolve) => {
+      releaseStaleRequests = resolve;
+    });
     const emitCommerceEvent = await setupCommerceSocket(context);
     await setupCommonRoutes(context);
     await context.unroute('**/lots');
     await context.route('**/lots', async (route) => {
       if (stageChanged) {
         await new Promise((resolve) => setTimeout(resolve, 1_500));
+      } else if (holdNextOldRequest) {
+        holdNextOldRequest = false;
+        resolveStaleRequestStarted();
+        await staleRequestsReleased;
       }
       return route.fulfill(
         json(
@@ -526,6 +539,8 @@ test.describe('auction room commerce', () => {
     await expect(
       page.getByRole('heading', { name: 'Lote em Pista', level: 2 }),
     ).toBeVisible();
+    holdNextOldRequest = true;
+    await staleRequestStarted;
     stageChanged = true;
     await emitCommerceEvent('lot:stage-changed', {
       auctionId: auction.id,
@@ -542,6 +557,11 @@ test.describe('auction room commerce', () => {
     await expect(
       page.getByRole('heading', { name: 'Lote adicionado ao vivo', level: 2 }),
     ).toBeVisible({ timeout: 1_000 });
+    releaseStaleRequests();
+    await page.waitForTimeout(200);
+    await expect(
+      page.getByRole('heading', { name: 'Lote adicionado ao vivo', level: 2 }),
+    ).toBeVisible();
   });
 
   test('removes the active lot immediately when the stage becomes empty', async ({
