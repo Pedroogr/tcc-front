@@ -7,6 +7,7 @@ import { AuctionBroadcastControls } from '@/components/AuctionBroadcastControls'
 import { AuctionStreamPlayer } from '@/components/AuctionStreamPlayer';
 import { DeclareWinnerPanel } from '@/components/DeclareWinnerPanel';
 import { OfficeBidHistory } from '@/components/OfficeBidHistory';
+import { OperatorAccessPanel } from '@/components/OperatorAccessPanel';
 import type { LotImageItem } from '@/components/LotImageInput';
 import { Button } from '@/components/ui/button';
 import { Status } from '@/design/primitives/Status';
@@ -191,6 +192,10 @@ export function AuctionRoomPage({
           )}
 
           {canManage && <OfficeBidHistory bids={officeBidHistory} />}
+
+          {canManage && auction && (
+            <OperatorAccessPanel auctionId={auction.id} />
+          )}
 
           {canManage && (
             <RoomSidePanel
