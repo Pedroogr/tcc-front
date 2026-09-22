@@ -105,9 +105,68 @@ test.describe('authentication UI', () => {
     const buyer = page.getByRole('button', { name: 'Comprador' });
     const seller = page.getByRole('button', { name: 'Vendedor' });
     await expect(buyer).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByLabel('Inscrição estadual')).toHaveAttribute(
+      'required',
+      '',
+    );
+    await expect(page.getByLabel('UF da IE')).toHaveAttribute('required', '');
     await seller.click();
     await expect(seller).toHaveAttribute('aria-pressed', 'true');
     await expect(page.getByText('Dados do vendedor')).toBeVisible();
+    await expect(page.getByLabel('UF da IE')).toHaveCount(0);
+  });
+
+  test('sends normalized IE only for buyer registration', async ({ context, page }) => {
+    let registrationBody: Record<string, unknown> | undefined;
+    const registeredUser = {
+      id: 'buyer-new',
+      name: 'Comprador Novo',
+      email: 'novo@example.test',
+      platformRole: 'USER',
+      status: 'ACTIVE',
+      buyerProfile: { id: 'profile-new', ie: '110042490114', ieUf: 'SP' },
+      sellerProfile: null,
+      createdAt: '2026-09-22T12:00:00.000Z',
+      updatedAt: '2026-09-22T12:00:00.000Z',
+    };
+    await context.route('**/auth/register', async (route) => {
+      registrationBody = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify(registeredUser),
+      });
+    });
+    await context.route('**/auth/login', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          accessToken: 'buyer-new-token',
+          actorType: 'USER',
+          user: registeredUser,
+        }),
+      }),
+    );
+    await context.route('http://localhost:3000/auctions**', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+    );
+    await context.route('http://localhost:3000/lots', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+    );
+
+    await page.goto('/');
+    await page.getByLabel('Nome completo').fill('Comprador Novo');
+    await page.getByLabel('E-mail').fill('novo@example.test');
+    await page.getByLabel('Senha').fill('senha-segura');
+    await page.getByLabel('Inscrição estadual').fill('110.042.490.114');
+    await page.getByLabel('UF da IE').fill('sp');
+    await page.getByRole('button', { name: 'Criar conta e entrar' }).click();
+
+    await expect.poll(() => registrationBody).toMatchObject({
+      accountType: 'BUYER',
+      buyerProfile: { ie: '110042490114', ieUf: 'SP' },
+    });
   });
 
   test('shows the API error when login is rejected', async ({ page }) => {

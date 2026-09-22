@@ -168,7 +168,31 @@ async function setupCommonRoutes(context: BrowserContext) {
       }),
     ),
   );
-  await context.route('**/me/buyer-registrations', (route) => route.fulfill(json([])));
+  await context.route('**/me/buyer-registrations', (route) =>
+    route.fulfill(
+      json([
+        {
+          id: 'pending-reg-1',
+          status: 'PENDING',
+          buyerId: buyer.id,
+          auctionHouseId: auctionHouse.id,
+          buyer: {
+            ...buyer,
+            buyerProfile: {
+              id: 'buyer-profile-1',
+              userId: buyer.id,
+              ie: '224365879',
+              ieUf: 'RS',
+              createdAt: TS,
+              updatedAt: TS,
+            },
+          },
+          createdAt: TS,
+          updatedAt: TS,
+        },
+      ]),
+    ),
+  );
   await context.route('**/lots/*/bids', (route) => route.fulfill(json(officeHistory)));
 }
 
@@ -467,6 +491,7 @@ test.describe('auction room commerce', () => {
     await expect(page.getByText('Comprador A').first()).toBeVisible();
     await expect(page.getByRole('cell', { name: 'Comprador B' })).toBeVisible();
     await expect(page.getByText(/1\.250/).first()).toBeVisible();
+    await expect(page.getByText('IE 224365879 · RS')).toBeVisible();
   });
 
   test('recovers a winning bid from the backend when the realtime event is missed', async ({

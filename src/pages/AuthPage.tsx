@@ -24,10 +24,16 @@ type SellerProfileFormState = {
   country: string;
 };
 
+type BuyerProfileFormState = {
+  ie: string;
+  ieUf: string;
+};
+
 type AuthPageProps = {
   authMode: AuthMode;
   accountType: UserAccountType;
   userForm: UserFormState;
+  buyerProfileForm: BuyerProfileFormState;
   sellerProfileForm: SellerProfileFormState;
   isSubmitting: boolean;
   error: string;
@@ -39,6 +45,10 @@ type AuthPageProps = {
   onUserPhoneChange: (value: string) => void;
   onUserDocumentChange: (value: string) => void;
   onFillDevUserCpf: () => void;
+  onBuyerProfileFieldChange: (
+    field: keyof BuyerProfileFormState,
+    value: string,
+  ) => void;
   onSellerProfileFieldChange: (
     field: keyof SellerProfileFormState,
     value: string,
@@ -59,6 +69,7 @@ export function AuthPage({
   authMode,
   accountType,
   userForm,
+  buyerProfileForm,
   sellerProfileForm,
   isSubmitting,
   error,
@@ -70,6 +81,7 @@ export function AuthPage({
   onUserPhoneChange,
   onUserDocumentChange,
   onFillDevUserCpf,
+  onBuyerProfileFieldChange,
   onSellerProfileFieldChange,
 }: AuthPageProps) {
   const isRegisterMode = authMode === 'register';
@@ -275,6 +287,42 @@ export function AuthPage({
                     )}
                   </label>
                 </div>
+
+                {accountType === 'BUYER' && (
+                  <fieldset className="grid gap-5 border-t border-border pt-5">
+                    <legend className="t-label pr-3">Dados do comprador</legend>
+                    <div className="grid gap-5 sm:grid-cols-[1fr_96px]">
+                      <label className={labelClassName}>
+                        Inscrição estadual
+                        <Input
+                          className={fieldClassName}
+                          inputMode="numeric"
+                          required
+                          value={buyerProfileForm.ie}
+                          onChange={(event) =>
+                            onBuyerProfileFieldChange('ie', event.target.value)
+                          }
+                          placeholder="Somente números"
+                        />
+                      </label>
+
+                      <label className={labelClassName}>
+                        UF da IE
+                        <Input
+                          className={fieldClassName}
+                          maxLength={2}
+                          minLength={2}
+                          required
+                          value={buyerProfileForm.ieUf}
+                          onChange={(event) =>
+                            onBuyerProfileFieldChange('ieUf', event.target.value)
+                          }
+                          placeholder="RS"
+                        />
+                      </label>
+                    </div>
+                  </fieldset>
+                )}
 
                 {accountType === 'SELLER' && (
                   <fieldset className="grid gap-5 border-t border-border pt-5">

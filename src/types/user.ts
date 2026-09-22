@@ -12,6 +12,16 @@ export type SellerProfile = {
   updatedAt: string;
 };
 
+export type BuyerProfile = {
+  id: string;
+  userId: string;
+  ie?: string | null;
+  ieUf?: string | null;
+  verificationStatus?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type User = {
   id: string;
   name: string;
@@ -20,7 +30,7 @@ export type User = {
   document?: string | null;
   platformRole: string;
   status: string;
-  buyerProfile?: unknown;
+  buyerProfile?: BuyerProfile | null;
   sellerProfile?: SellerProfile | null;
   createdAt: string;
   updatedAt: string;
@@ -37,6 +47,11 @@ export type CreateSellerProfilePayload = {
   country?: string;
 };
 
+export type CreateBuyerProfilePayload = {
+  ie: string;
+  ieUf: string;
+};
+
 export type CreateUserPayload = {
   name: string;
   email: string;
@@ -44,6 +59,7 @@ export type CreateUserPayload = {
   phone?: string;
   document?: string;
   accountType?: UserAccountType;
+  buyerProfile?: CreateBuyerProfilePayload;
   sellerProfile?: CreateSellerProfilePayload;
 };
 

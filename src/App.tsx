@@ -122,6 +122,11 @@ const emptySellerProfileForm = {
   country: 'BR',
 };
 
+const emptyBuyerProfileForm = {
+  ie: '',
+  ieUf: '',
+};
+
 const emptyAuctionHouseInviteForm = {
   name: '',
   document: '',
@@ -137,6 +142,7 @@ type LotFormState = typeof emptyLotForm;
 type AuctionFormState = typeof emptyAuctionForm;
 type UserFormState = typeof emptyUserForm;
 type SellerProfileFormState = typeof emptySellerProfileForm;
+type BuyerProfileFormState = typeof emptyBuyerProfileForm;
 type AuctionHouseInviteFormState = typeof emptyAuctionHouseInviteForm;
 type View =
   | 'home'
@@ -347,6 +353,8 @@ function App() {
   >('idle');
   const [isOfficeInviteEmailLocked, setIsOfficeInviteEmailLocked] = useState(false);
   const [accountType, setAccountType] = useState<UserAccountType>('BUYER');
+  const [buyerProfileForm, setBuyerProfileForm] =
+    useState<BuyerProfileFormState>(emptyBuyerProfileForm);
   const [sellerProfileForm, setSellerProfileForm] = useState<SellerProfileFormState>(
     emptySellerProfileForm,
   );
@@ -1241,6 +1249,16 @@ function App() {
     setSellerProfileForm((current) => ({ ...current, [field]: value }));
   }
 
+  function updateBuyerProfileField(field: keyof BuyerProfileFormState, value: string) {
+    setBuyerProfileForm((current) => ({
+      ...current,
+      [field]:
+        field === 'ie'
+          ? onlyDigits(value)
+          : value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2),
+    }));
+  }
+
   function enterAuctionRoom(auctionId: string) {
     setSelectedAuctionId(auctionId);
     setSelectedStreamState(null);
@@ -1275,6 +1293,13 @@ function App() {
       accountType,
     };
 
+    if (accountType === 'BUYER') {
+      payload.buyerProfile = {
+        ie: onlyDigits(buyerProfileForm.ie),
+        ieUf: buyerProfileForm.ieUf.trim().toUpperCase(),
+      };
+    }
+
     if (accountType === 'SELLER') {
       payload.sellerProfile = {
         farmName: sellerProfileForm.farmName.trim() || undefined,
@@ -1302,6 +1327,7 @@ function App() {
       setCurrentUser(auth.user);
       setCurrentAuctionHouse(null);
       setUserForm(emptyUserForm);
+      setBuyerProfileForm(emptyBuyerProfileForm);
       setSellerProfileForm(emptySellerProfileForm);
       setAccountType('BUYER');
       await loadAuctions(false);
@@ -1609,6 +1635,7 @@ function App() {
         authMode={authMode}
         accountType={accountType}
         userForm={userForm}
+        buyerProfileForm={buyerProfileForm}
         sellerProfileForm={sellerProfileForm}
         isSubmitting={isSubmitting}
         error={error}
@@ -1623,6 +1650,7 @@ function App() {
         onUserPhoneChange={updateUserPhone}
         onUserDocumentChange={updateUserDocument}
         onFillDevUserCpf={fillDevUserCpf}
+        onBuyerProfileFieldChange={updateBuyerProfileField}
         onSellerProfileFieldChange={updateSellerProfileField}
       />
     );
