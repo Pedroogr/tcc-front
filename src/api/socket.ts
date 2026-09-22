@@ -102,12 +102,19 @@ export type LotWinnerAnnouncedPayload = LotSoldPayload & {
   winnerName: string;
 };
 
+export type LotStageChangedPayload = {
+  auctionId: string;
+  lotId: string;
+  status: string;
+};
+
 type CommerceServerToClientEvents = {
   'bid:price-updated': (payload: BidPriceUpdatedPayload) => void;
   'bid:office-recorded': (payload: OfficeBidRecordedPayload) => void;
   'lot:sold': (payload: LotSoldPayload) => void;
   'lot:winner-announced': (payload: LotWinnerAnnouncedPayload) => void;
   'sale:won': (payload: SaleWonPayload) => void;
+  'lot:stage-changed': (payload: LotStageChangedPayload) => void;
   'commerce:error': (payload: { message: string }) => void;
 };
 
@@ -128,6 +135,15 @@ export function createCommerceSocket(): CommerceSocket {
 
   return io(apiUrl, {
     auth: token ? { token } : undefined,
+    reconnectionAttempts: 6,
+    reconnectionDelay: 800,
+    transports: ['websocket', 'polling'],
+  });
+}
+
+export function createOperatorCommerceSocket(token: string): CommerceSocket {
+  return io(apiUrl, {
+    auth: { token },
     reconnectionAttempts: 6,
     reconnectionDelay: 800,
     transports: ['websocket', 'polling'],
