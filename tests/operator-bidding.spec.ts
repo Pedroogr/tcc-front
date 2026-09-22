@@ -130,6 +130,7 @@ test.describe('operator bidding', () => {
     let receivedBid: unknown;
     let activeLot = lotTwo;
 
+    await page.setViewportSize({ width: 390, height: 844 });
     await storeOperatorToken(context);
     await setupOperatorSocket(context);
     await context.route('http://localhost:3000/operator/session', (route) =>
@@ -154,6 +155,11 @@ test.describe('operator bidding', () => {
 
     await page.goto('/operator');
     await expect(page.getByRole('heading', { name: 'Lote 2' })).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      )
+      .toBe(true);
     await expect(page.getByText(/R\$\s*1\.000/)).toBeVisible();
     await expect(page.locator('video')).toHaveCount(0);
     await expect(page.getByText(/transmissão/i)).toHaveCount(0);
