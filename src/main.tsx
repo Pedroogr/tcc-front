@@ -10,14 +10,30 @@ import './index.css'
 import App from './App.tsx'
 import { AdminApp } from './admin/AdminApp.tsx'
 import { OperatorApp } from './operator/OperatorApp.tsx'
+import { GestureStationApp } from './gesture/GestureStationApp.tsx'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
 const isAdminRoute = /^\/admin\/?$/.test(window.location.pathname)
 const isOperatorRoute = /^\/operator\/?$/.test(window.location.pathname)
+const gestureStationMatch = window.location.pathname.match(
+  /^\/gesture-station\/([^/]+)\/?$/,
+)
+
+function decodeRoutePart(value: string | undefined) {
+  if (!value) return null
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return null
+  }
+}
+const gestureStationAuctionId = decodeRoutePart(gestureStationMatch?.[1])
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {isOperatorRoute ? (
+    {gestureStationAuctionId ? (
+      <GestureStationApp auctionId={gestureStationAuctionId} />
+    ) : isOperatorRoute ? (
       <OperatorApp />
     ) : isAdminRoute ? (
       <AdminApp />

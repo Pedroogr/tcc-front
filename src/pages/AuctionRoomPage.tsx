@@ -1,5 +1,5 @@
 import type { ChangeEvent, FormEvent } from 'react';
-import { ChevronLeft, Plus } from 'lucide-react';
+import { ChevronLeft, Hand, Plus } from 'lucide-react';
 import type { Auction, AuctionStreamState } from '@/types/auction';
 import type { Lot, OfficeBid } from '@/types/lot';
 import type { BuyerRegistration } from '@/types/user';
@@ -150,10 +150,20 @@ export function AuctionRoomPage({
         <div className="flex items-center gap-2.5">
           {isLive && <Status kind="live" />}
           {canManage && (
-            <Button size="sm" type="button" variant="outline" onClick={onCreateAuction}>
-              <Plus />
-              Novo remate
-            </Button>
+            <>
+              {auction && (
+                <Button asChild size="sm" variant="outline">
+                  <a href={`/gesture-station/${encodeURIComponent(auction.id)}`}>
+                    <Hand />
+                    Estação de gestos
+                  </a>
+                </Button>
+              )}
+              <Button size="sm" type="button" variant="outline" onClick={onCreateAuction}>
+                <Plus />
+                Novo remate
+              </Button>
+            </>
           )}
         </div>
       </header>
