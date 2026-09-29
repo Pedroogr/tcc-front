@@ -1,5 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { GestureFirstHandAlert } from '@/operator/GestureFirstHandAlert';
+import { OperatorBidPage } from '@/operator/OperatorBidPage';
 import {
   GESTURE_ALERT_SOUND_MS,
   GESTURE_ALERT_VIBRATION_PATTERN,
@@ -7,6 +9,27 @@ import {
   useGestureFirstHandAlert,
   type GestureFirstHandEvent,
 } from '@/operator/gesture-alert';
+import type { OperatorSession } from '@/types/operator';
+
+const { operatorSocket } = vi.hoisted(() => ({
+  operatorSocket: {
+    on: vi.fn(),
+    emit: vi.fn(),
+    disconnect: vi.fn(),
+  },
+}));
+
+vi.mock('@/api/socket', () => ({
+  createOperatorCommerceSocket: vi.fn(() => operatorSocket),
+}));
+
+vi.mock('@/api/operatorApi', () => ({
+  createOperatorBid: vi.fn(),
+  searchOperatorBuyers: vi.fn(() => Promise.resolve([])),
+  OperatorApiError: class OperatorApiError extends Error {
+    status = 500;
+  },
+}));
 
 const NOW = new Date('2026-09-29T15:00:00.000Z');
 
@@ -240,5 +263,106 @@ describe('triggerGestureAlertFeedback', () => {
 
     handleEnded?.();
     expect(close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('GestureFirstHandAlert', () => {
+  it('renders the approved compact alert with accessible text and token colors', () => {
+    const { container } = render(
+      <GestureFirstHandAlert
+        alert={{
+          eventId: 'gesture-1',
+          capturedAt: NOW.toISOString(),
+          expiresAt: new Date(NOW.getTime() + 5_000).toISOString(),
+          snapshotUrl: 'blob:gesture-1',
+          remainingSeconds: 5,
+        }}
+      />,
+    );
+
+    const alert = screen.getByRole('alert', { name: 'Primeira mão detectada' });
+    expect(alert).toHaveTextContent('Primeira mão detectada');
+    expect(alert).toHaveTextContent('5s');
+    expect(alert).toHaveTextContent('Imagem capturada agora');
+    expect(alert).toHaveTextContent('Som e vibração quando disponíveis');
+    expect(alert).toHaveClass('border-primary', 'bg-card', 'text-foreground');
+    expect(
+      screen.getByAltText(
+        'Pessoa com a primeira mão levantada, destacada pela estação de gestos',
+      ),
+    ).toHaveAttribute('src', 'blob:gesture-1');
+    expect(container.querySelector('button')).not.toBeInTheDocument();
+  });
+});
+
+describe('OperatorBidPage gesture boundary', () => {
+  const session: OperatorSession = {
+    type: 'OPERATOR',
+    operatorAccess: {
+      id: 'operator-access-1',
+      auctionId: 'auction-1',
+      label: 'Pista principal',
+      expiresAt: '2026-09-30T15:00:00.000Z',
+    },
+    currentLot: {
+      id: 'lot-1',
+      code: '1',
+      title: 'Lote 1',
+      status: 'IN_AUCTION',
+      currentPrice: '1000',
+      nextMinimumBid: '1100',
+    },
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    vi.stubGlobal('AudioContext', undefined);
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: vi.fn(() => 'blob:gesture-1'),
+      revokeObjectURL: vi.fn(),
+    });
+    Object.defineProperty(navigator, 'vibrate', {
+      configurable: true,
+      value: vi.fn(() => true),
+    });
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    operatorSocket.on.mockClear();
+    operatorSocket.emit.mockClear();
+    operatorSocket.disconnect.mockClear();
+  });
+
+  it('is hidden without an event and overlays without replacing the bidding flow', async () => {
+    const props = {
+      token: 'operator-token',
+      session,
+      isSyncing: false,
+      syncError: '',
+      notice: '',
+      onRefresh: vi.fn(async () => session),
+      onAuthoritativeConflict: vi.fn(async () => session),
+      onClearNotice: vi.fn(),
+      onLogout: vi.fn(),
+    };
+    const { rerender } = render(<OperatorBidPage {...props} />);
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText('Registrar lance presencial')).toBeInTheDocument();
+
+    rerender(<OperatorBidPage {...props} gestureEvent={event('gesture-1')} />);
+    await flushEffects();
+
+    expect(
+      screen.getByRole('alert', { name: 'Primeira mão detectada' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Registrar lance presencial')).toBeInTheDocument();
+    expect(screen.getByLabelText('Buscar comprador')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Revisar lance' })).toBeInTheDocument();
   });
 });

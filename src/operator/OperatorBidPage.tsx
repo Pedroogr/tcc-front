@@ -24,6 +24,11 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import type { OperatorBuyer, OperatorSession } from '@/types/operator';
+import { GestureFirstHandAlert } from './GestureFirstHandAlert';
+import {
+  useGestureFirstHandAlert,
+  type GestureFirstHandEvent,
+} from './gesture-alert';
 
 type OperatorBidPageProps = {
   token: string;
@@ -35,6 +40,7 @@ type OperatorBidPageProps = {
   onAuthoritativeConflict: (message: string) => Promise<OperatorSession | null>;
   onClearNotice: () => void;
   onLogout: () => void;
+  gestureEvent?: GestureFirstHandEvent | null;
 };
 
 const currency = new Intl.NumberFormat('pt-BR', {
@@ -63,6 +69,7 @@ export function OperatorBidPage({
   onAuthoritativeConflict,
   onClearNotice,
   onLogout,
+  gestureEvent = null,
 }: OperatorBidPageProps) {
   const [query, setQuery] = useState('');
   const [buyers, setBuyers] = useState<OperatorBuyer[]>([]);
@@ -76,6 +83,7 @@ export function OperatorBidPage({
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const lot = session.currentLot;
+  const gestureAlert = useGestureFirstHandAlert(gestureEvent);
 
   useEffect(() => {
     const socket = createOperatorCommerceSocket(token);
@@ -230,7 +238,9 @@ export function OperatorBidPage({
   }
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-2xl flex-col gap-4 bg-background px-4 py-5 sm:px-6">
+    <main className="mx-auto flex min-h-dvh w-full max-w-2xl flex-col gap-4 bg-background px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-[max(1.25rem,env(safe-area-inset-top))] sm:px-6">
+      {gestureAlert ? <GestureFirstHandAlert alert={gestureAlert} /> : null}
+
       <header className="flex items-center justify-between gap-4">
         <div>
           <p className="t-label">Operador de pista</p>
