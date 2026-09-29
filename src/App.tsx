@@ -68,6 +68,7 @@ import {
   formatCpf,
   formatCpfOrCnpj,
   formatPhone,
+  formatStateRegistration,
   generateValidCnpj,
   generateValidCpf,
   onlyDigits,
@@ -75,6 +76,7 @@ import {
   validateCpfOrCnpj,
   validatePhone,
 } from './utils/brFields';
+import { validatePublicEmailDomain } from './utils/email';
 import {
   applyOfficeBidEvent,
   reconcileOfficeBidHistory,
@@ -1283,7 +1285,13 @@ function App() {
     field: keyof AuctionHouseInviteFormState,
     value: string,
   ) {
-    setAuctionHouseInviteForm((current) => ({ ...current, [field]: value }));
+    setAuctionHouseInviteForm((current) => ({
+      ...current,
+      [field]:
+        field === 'state'
+          ? value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2)
+          : value,
+    }));
   }
 
   function updateAuctionHouseInvitePhone(value: string) {
@@ -1312,13 +1320,21 @@ function App() {
   }
 
   function updateBuyerProfileField(field: keyof BuyerProfileFormState, value: string) {
-    setBuyerProfileForm((current) => ({
-      ...current,
-      [field]:
-        field === 'ie'
-          ? onlyDigits(value)
-          : value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2),
-    }));
+    setBuyerProfileForm((current) => {
+      if (field === 'ie') {
+        return {
+          ...current,
+          ie: formatStateRegistration(value, current.ieUf),
+        };
+      }
+
+      const ieUf = value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2);
+      return {
+        ...current,
+        ieUf,
+        ie: formatStateRegistration(current.ie, ieUf),
+      };
+    });
   }
 
   function enterAuctionRoom(auctionId: string) {
@@ -1339,9 +1355,10 @@ function App() {
 
     const phoneError = validatePhone(userForm.phone);
     const documentError = validateCpfOrCnpj(userForm.document);
+    const emailError = await validatePublicEmailDomain(userForm.email);
 
-    if (phoneError || documentError) {
-      setError(phoneError || documentError);
+    if (emailError || phoneError || documentError) {
+      setError(emailError || phoneError || documentError);
       setIsSubmitting(false);
       return;
     }
@@ -1461,9 +1478,12 @@ function App() {
 
     const phoneError = validatePhone(auctionHouseInviteForm.phone);
     const documentError = validateCnpj(auctionHouseInviteForm.document);
+    const emailError = await validatePublicEmailDomain(
+      auctionHouseInviteForm.email,
+    );
 
-    if (phoneError || documentError) {
-      setError(phoneError || documentError);
+    if (emailError || phoneError || documentError) {
+      setError(emailError || phoneError || documentError);
       setIsSubmitting(false);
       return;
     }
@@ -1474,8 +1494,8 @@ function App() {
       email: auctionHouseInviteForm.email.trim(),
       phone: onlyDigits(auctionHouseInviteForm.phone) || undefined,
       password: auctionHouseInviteForm.password,
-      city: auctionHouseInviteForm.city.trim() || undefined,
-      state: auctionHouseInviteForm.state.trim() || undefined,
+      city: auctionHouseInviteForm.city.trim(),
+      state: auctionHouseInviteForm.state.trim().toUpperCase(),
       country: auctionHouseInviteForm.country.trim() || undefined,
     };
 

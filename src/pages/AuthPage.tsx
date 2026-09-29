@@ -302,7 +302,7 @@ export function AuthPage({
                           onChange={(event) =>
                             onBuyerProfileFieldChange('ie', event.target.value)
                           }
-                          placeholder="Somente números"
+                          placeholder="Digite a IE"
                         />
                       </label>
 

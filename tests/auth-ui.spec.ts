@@ -100,6 +100,34 @@ test.describe('authentication UI', () => {
     await expect(page.locator('input:invalid').first()).toBeVisible();
   });
 
+  test('rejects registration when the e-mail extension does not exist', async ({
+    context,
+    page,
+  }) => {
+    let registrationRequests = 0;
+    await context.route('**/auth/register', (route) => {
+      registrationRequests += 1;
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: '{}',
+      });
+    });
+
+    await page.goto('/');
+    await page.getByLabel('Nome completo').fill('Marcelo Silva');
+    await page.getByLabel('E-mail').fill('marcelo@gmai.colm');
+    await page.getByLabel('Senha').fill('senha-segura');
+    await page.getByLabel('Inscrição estadual').fill('110042490114');
+    await page.getByLabel('UF da IE').fill('SP');
+    await page.getByRole('button', { name: 'Criar conta e entrar' }).click();
+
+    await expect(page.getByRole('alert')).toContainText(
+      'Informe um e-mail com uma extensão válida.',
+    );
+    expect(registrationRequests).toBe(0);
+  });
+
   test('switches buyer and seller registration profiles', async ({ page }) => {
     await page.goto('/');
     const buyer = page.getByRole('button', { name: 'Comprador' });
@@ -121,7 +149,7 @@ test.describe('authentication UI', () => {
     const registeredUser = {
       id: 'buyer-new',
       name: 'Comprador Novo',
-      email: 'novo@example.test',
+      email: 'novo@example.com',
       platformRole: 'USER',
       status: 'ACTIVE',
       buyerProfile: { id: 'profile-new', ie: '110042490114', ieUf: 'SP' },
@@ -157,16 +185,67 @@ test.describe('authentication UI', () => {
 
     await page.goto('/');
     await page.getByLabel('Nome completo').fill('Comprador Novo');
-    await page.getByLabel('E-mail').fill('novo@example.test');
+    await page.getByLabel('E-mail').fill('novo@example.com');
     await page.getByLabel('Senha').fill('senha-segura');
     await page.getByLabel('Inscrição estadual').fill('110.042.490.114');
     await page.getByLabel('UF da IE').fill('sp');
+    await expect(page.getByLabel('Inscrição estadual')).toHaveValue(
+      '110.042.490.114',
+    );
     await page.getByRole('button', { name: 'Criar conta e entrar' }).click();
 
     await expect.poll(() => registrationBody).toMatchObject({
       accountType: 'BUYER',
       buyerProfile: { ie: '110042490114', ieUf: 'SP' },
     });
+  });
+
+  test('reformats and limits the state registration when its UF changes', async ({
+    page,
+  }) => {
+    await page.goto('/');
+
+    await page.getByLabel('Inscrição estadual').fill('195119568');
+    await page.getByLabel('UF da IE').fill('pi');
+    await expect(page.getByLabel('Inscrição estadual')).toHaveValue(
+      '19.511.956-8',
+    );
+
+    await page.getByLabel('Inscrição estadual').fill('295082968');
+    await page.getByLabel('UF da IE').fill('to');
+    await expect(page.getByLabel('Inscrição estadual')).toHaveValue(
+      '29.508.296-8',
+    );
+
+    await page.reload();
+    await page.getByLabel('Inscrição estadual').fill('22436587929999999');
+    await page.getByLabel('UF da IE').fill('rs');
+
+    await expect(page.getByLabel('Inscrição estadual')).toHaveValue(
+      '224/3658792',
+    );
+  });
+
+  test('requires municipality and UF in office invite registration', async ({
+    context,
+    page,
+  }) => {
+    await context.route('**/auction-houses/invites/invite-1', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          email: 'office@example.test',
+          expiresAt: '2099-09-25T12:00:00.000Z',
+          status: 'PENDING',
+        }),
+      }),
+    );
+
+    await page.goto('/cadastro-escritorio/invite-1');
+
+    await expect(page.getByLabel('Município')).toHaveAttribute('required', '');
+    await expect(page.getByLabel('UF')).toHaveAttribute('required', '');
   });
 
   test('shows the API error when login is rejected', async ({ page }) => {

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Copy, KeyRound, RefreshCw, Trash2 } from 'lucide-react';
+import { Copy, ExternalLink, KeyRound, RefreshCw, Trash2 } from 'lucide-react';
 import {
   createOperatorAccess,
   listOperatorAccesses,
+  reissueOperatorAccessCode,
   revokeOperatorAccess,
 } from '@/api/operatorApi';
 import type {
@@ -30,12 +31,21 @@ function accessStatus(access: OperatorAccessSummary) {
   return 'Aguardando ativação';
 }
 
+function canReissueAccess(access: OperatorAccessSummary) {
+  return (
+    !access.usedAt &&
+    !access.revokedAt &&
+    new Date(access.expiresAt).getTime() > Date.now()
+  );
+}
+
 export function OperatorAccessPanel({ auctionId }: OperatorAccessPanelProps) {
   const [accesses, setAccesses] = useState<OperatorAccessSummary[]>([]);
   const [label, setLabel] = useState('');
   const [created, setCreated] = useState<CreatedOperatorAccess | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [reissuingId, setReissuingId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [copyMessage, setCopyMessage] = useState('');
 
@@ -111,6 +121,29 @@ export function OperatorAccessPanel({ auctionId }: OperatorAccessPanelProps) {
     }
   }
 
+  async function handleReissue(access: OperatorAccessSummary) {
+    if (
+      !window.confirm(
+        `Gerar um novo código para "${access.label}"? O código anterior deixará de funcionar.`,
+      )
+    ) {
+      return;
+    }
+
+    setReissuingId(access.id);
+    setError('');
+    try {
+      const next = await reissueOperatorAccessCode(access.id);
+      setCreated(next);
+      setCopyMessage('');
+      await loadAccesses();
+    } catch {
+      setError('Não foi possível reemitir o código do pisteiro.');
+    } finally {
+      setReissuingId(null);
+    }
+  }
+
   return (
     <section className="overflow-hidden rounded-xl border border-border bg-card">
       <header className="flex items-center justify-between gap-3 border-b border-border px-4.5 py-3.5">
@@ -166,13 +199,19 @@ export function OperatorAccessPanel({ auctionId }: OperatorAccessPanelProps) {
                 className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted px-3 py-2.5"
                 key={access.id}
               >
-                <div className="min-w-0">
+                <button
+                  aria-label={`Reemitir código de ${access.label}`}
+                  className="min-w-0 flex-1 text-left disabled:cursor-default"
+                  disabled={!canReissueAccess(access) || reissuingId === access.id}
+                  type="button"
+                  onClick={() => void handleReissue(access)}
+                >
                   <strong className="block truncate text-sm">{access.label}</strong>
                   <span className="text-xs text-muted-foreground">
                     {accessStatus(access)} · expira em{' '}
                     {new Date(access.expiresAt).toLocaleString('pt-BR')}
                   </span>
-                </div>
+                </button>
                 <Button
                   aria-label={`Revogar ${access.label}`}
                   disabled={Boolean(access.revokedAt)}
@@ -199,8 +238,8 @@ export function OperatorAccessPanel({ auctionId }: OperatorAccessPanelProps) {
           <DialogHeader>
             <DialogTitle>Código temporário do pisteiro</DialogTitle>
             <DialogDescription>
-              Este código aparece somente agora, vale por até 24 horas e só pode
-              ser ativado em um dispositivo.
+              Este código aparece somente agora e só pode ser ativado em um
+              dispositivo. Ao reemitir, o código anterior deixa de funcionar.
             </DialogDescription>
           </DialogHeader>
           {created && (
@@ -214,6 +253,12 @@ export function OperatorAccessPanel({ auctionId }: OperatorAccessPanelProps) {
                 </p>
               )}
               <div className="flex justify-end gap-2">
+                <Button asChild type="button" variant="outline">
+                  <a href="/operator" rel="noreferrer" target="_blank">
+                    <ExternalLink />
+                    Abrir tela do pisteiro
+                  </a>
+                </Button>
                 <Button type="button" variant="outline" onClick={() => void handleCopy()}>
                   <Copy />
                   Copiar código

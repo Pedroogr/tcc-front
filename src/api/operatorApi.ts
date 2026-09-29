@@ -103,6 +103,13 @@ export function listOperatorAccesses(auctionId: string) {
   );
 }
 
+export function reissueOperatorAccessCode(accessId: string) {
+  return apiRequest<CreatedOperatorAccess>(
+    `/operator/accesses/${accessId}/code`,
+    { method: 'POST' },
+  );
+}
+
 export function revokeOperatorAccess(accessId: string) {
   return apiRequest<OperatorAccessSummary>(`/operator/accesses/${accessId}`, {
     method: 'DELETE',

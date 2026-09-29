@@ -55,13 +55,22 @@ test('the owner office creates, dismisses, lists, and revokes operator access', 
   await context.route('**/operator/accesses**', async (route) => {
     const method = route.request().method();
 
+    if (
+      method === 'POST' &&
+      route.request().url().endsWith('/operator/accesses/access-1/code')
+    ) {
+      return route.fulfill(
+        json({ ...accesses[0], code: '9876-ABCD-5432' }, 201),
+      );
+    }
+
     if (method === 'POST') {
       const body = route.request().postDataJSON() as { label: string };
       const summary = {
         id: 'access-1',
         auctionId: auction.id,
         label: body.label,
-        expiresAt: '2026-09-23T12:00:00.000Z',
+        expiresAt: '2099-09-23T12:00:00.000Z',
         usedAt: null,
         revokedAt: null,
         createdAt: TS,
@@ -101,6 +110,15 @@ test('the owner office creates, dismisses, lists, and revokes operator access', 
   await expect(page.getByText('ABCD-1234-EF56')).toHaveCount(0);
   await expect(page.getByText('Pista principal')).toBeVisible();
   await expect(page.locator('body')).not.toContainText('codeHash');
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await page
+    .getByRole('button', { name: 'Reemitir código de Pista principal' })
+    .click();
+  await expect(page.getByText('9876-ABCD-5432')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Abrir tela do pisteiro' }))
+    .toHaveAttribute('href', '/operator');
+  await page.getByRole('button', { name: 'Fechar código' }).click();
 
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'Revogar Pista principal' }).click();

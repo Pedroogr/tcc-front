@@ -248,25 +248,30 @@ export function OfficeInvitePage({
                   </div>
 
                   <div className="grid gap-6 sm:grid-cols-[minmax(0,1fr)_7rem_7rem]">
-                    <Field htmlFor="office-city" label="Cidade">
+                    <Field htmlFor="office-city" label="Município">
                       <Input
                         autoComplete="address-level2"
                         id="office-city"
                         placeholder="Campo Grande"
+                        required
                         value={form.city}
                         onChange={(event) => onFieldChange('city', event.target.value)}
                       />
                     </Field>
 
-                    <Field htmlFor="office-state" label="Estado">
+                    <Field htmlFor="office-state" label="UF">
                       <Input
                         autoComplete="address-level1"
                         id="office-state"
                         maxLength={2}
                         placeholder="MS"
+                        required
                         value={form.state}
                         onChange={(event) =>
-                          onFieldChange('state', event.target.value.toUpperCase())
+                          onFieldChange(
+                            'state',
+                            event.target.value.toUpperCase().replace(/[^A-Z]/g, ''),
+                          )
                         }
                       />
                     </Field>

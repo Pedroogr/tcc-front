@@ -85,8 +85,8 @@ export type CreateAuctionHouseInvitePayload = {
   email: string;
   phone?: string;
   password: string;
-  city?: string;
-  state?: string;
+  city: string;
+  state: string;
   country?: string;
 };
 

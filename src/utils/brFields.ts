@@ -39,6 +39,72 @@ export function formatPhone(value: string) {
     .replace(/^(\(\d{2}\) \d{5})(\d)/, '$1-$2');
 }
 
+const stateRegistrationPatterns: Record<string, string> = {
+  AC: '##.###.###/###-##',
+  AL: '########-#',
+  AP: '########-#',
+  AM: '##.###.###-#',
+  CE: '########-#',
+  DF: '##.###.###/###-##',
+  ES: '########-#',
+  GO: '##.###.###-#',
+  MA: '########-#',
+  MT: '##########-#',
+  MS: '########-#',
+  MG: '###.###.###/####',
+  PA: '##-######-#',
+  PB: '########-#',
+  PR: '###.#####-##',
+  PI: '##.###.###-#',
+  RJ: '##.###.##-#',
+  RS: '###/#######',
+  RO: '#############-#',
+  RR: '########-#',
+  SC: '###.###.###',
+  SP: '###.###.###.###',
+  SE: '########-#',
+  TO: '##.###.###-#',
+};
+
+export function formatStateRegistration(value: string, state: string) {
+  const digits = onlyDigits(value);
+  const uf = state.trim().toUpperCase();
+  let pattern = stateRegistrationPatterns[uf];
+
+  if (uf === 'BA') {
+    pattern = digits.length <= 8 ? '######-##' : '#######-##';
+  } else if (uf === 'PE') {
+    pattern = digits.length <= 9 ? '#######-##' : '##.#.###.#######-#';
+  } else if (uf === 'RN') {
+    pattern = digits.length <= 9 ? '##.###.###-#' : '##.#.###.###-#';
+  }
+
+  if (!pattern) {
+    return digits.slice(0, 14);
+  }
+
+  return applyDigitPattern(digits, pattern);
+}
+
+function applyDigitPattern(value: string, pattern: string) {
+  const maxDigits = Array.from(pattern).filter((character) => character === '#').length;
+  const digits = value.slice(0, maxDigits);
+  let result = '';
+  let digitIndex = 0;
+
+  for (const character of pattern) {
+    if (character === '#') {
+      if (digitIndex >= digits.length) break;
+      result += digits[digitIndex];
+      digitIndex += 1;
+    } else if (digitIndex > 0 && digitIndex < digits.length) {
+      result += character;
+    }
+  }
+
+  return result;
+}
+
 export function validateCpfOrCnpj(value: string) {
   const digits = onlyDigits(value);
 
