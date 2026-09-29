@@ -5,10 +5,12 @@ import { OperatorBidPage } from '@/operator/OperatorBidPage';
 import {
   GESTURE_ALERT_SOUND_MS,
   GESTURE_ALERT_VIBRATION_PATTERN,
+  gesturePayloadToEvent,
   triggerGestureAlertFeedback,
   useGestureFirstHandAlert,
   type GestureFirstHandEvent,
 } from '@/operator/gesture-alert';
+import type { GestureFirstHandDetectedPayload } from '@/api/socket';
 import type { OperatorSession } from '@/types/operator';
 
 const { operatorSocket } = vi.hoisted(() => ({
@@ -295,6 +297,55 @@ describe('GestureFirstHandAlert', () => {
   });
 });
 
+describe('gesturePayloadToEvent', () => {
+  const basePayload = {
+    eventId: '4da148c7-0b3f-4cd9-b14d-e99581fd880f',
+    auctionId: 'auction-1',
+    capturedAt: NOW.toISOString(),
+    expiresAt: new Date(NOW.getTime() + 5_000).toISOString(),
+    personBox: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
+    snapshotMimeType: 'image/jpeg' as const,
+  };
+
+  it.each([
+    ['ArrayBuffer', new Uint8Array([1, 2, 3]).buffer],
+    ['offset Uint8Array', new Uint8Array([9, 1, 2, 3, 9]).subarray(1, 4)],
+    ['serialized Buffer', { type: 'Buffer' as const, data: [1, 2, 3] }],
+  ])('copies exact JPEG bytes from %s', async (_label, snapshot) => {
+    const converted = gesturePayloadToEvent(
+      { ...basePayload, snapshot },
+      'auction-1',
+      NOW.getTime(),
+    );
+
+    expect(converted).not.toBeNull();
+    expect(converted?.snapshot.type).toBe('image/jpeg');
+    expect([...new Uint8Array(await converted!.snapshot.arrayBuffer())]).toEqual([1, 2, 3]);
+  });
+
+  it.each([
+    ['wrong MIME', { ...basePayload, snapshotMimeType: 'image/png', snapshot: new Uint8Array([1]) }],
+    ['invalid binary', { ...basePayload, snapshot: { nope: true } }],
+    ['wrong auction', { ...basePayload, auctionId: 'auction-2', snapshot: new Uint8Array([1]) }],
+    [
+      'expired event',
+      {
+        ...basePayload,
+        expiresAt: new Date(NOW.getTime() - 1).toISOString(),
+        snapshot: new Uint8Array([1]),
+      },
+    ],
+  ])('rejects %s', (_label, payload) => {
+    expect(
+      gesturePayloadToEvent(
+        payload as GestureFirstHandDetectedPayload,
+        'auction-1',
+        NOW.getTime(),
+      ),
+    ).toBeNull();
+  });
+});
+
 describe('OperatorBidPage gesture boundary', () => {
   const session: OperatorSession = {
     type: 'OPERATOR',
@@ -364,5 +415,43 @@ describe('OperatorBidPage gesture boundary', () => {
     expect(screen.getByText('Registrar lance presencial')).toBeInTheDocument();
     expect(screen.getByLabelText('Buscar comprador')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Revisar lance' })).toBeInTheDocument();
+  });
+
+  it('subscribes to valid events for its auction and ignores another auction', async () => {
+    render(
+      <OperatorBidPage
+        token="operator-token"
+        session={session}
+        isSyncing={false}
+        syncError=""
+        notice=""
+        onRefresh={vi.fn(async () => session)}
+        onAuthoritativeConflict={vi.fn(async () => session)}
+        onClearNotice={vi.fn()}
+        onLogout={vi.fn()}
+      />,
+    );
+    const subscription = operatorSocket.on.mock.calls.find(
+      ([eventName]) => eventName === 'gesture:first-hand-detected',
+    );
+    expect(subscription).toBeDefined();
+    const receive = subscription?.[1] as (payload: GestureFirstHandDetectedPayload) => void;
+    const payload: GestureFirstHandDetectedPayload = {
+      eventId: '4da148c7-0b3f-4cd9-b14d-e99581fd880f',
+      auctionId: 'auction-2',
+      capturedAt: NOW.toISOString(),
+      expiresAt: new Date(NOW.getTime() + 5_000).toISOString(),
+      personBox: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
+      snapshotMimeType: 'image/jpeg',
+      snapshot: new Uint8Array([1, 2, 3]),
+    };
+
+    act(() => receive(payload));
+    await flushEffects();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    act(() => receive({ ...payload, auctionId: 'auction-1' }));
+    await flushEffects();
+    expect(screen.getByRole('alert', { name: /Primeira .* detectada/ })).toBeInTheDocument();
   });
 });

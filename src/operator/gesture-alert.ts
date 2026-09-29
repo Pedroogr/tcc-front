@@ -1,4 +1,8 @@
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import type {
+  GestureFirstHandDetectedPayload,
+  GestureSocketBinary,
+} from '@/api/socket';
 
 export const GESTURE_ALERT_SOUND_MS = 200;
 export const GESTURE_ALERT_VIBRATION_PATTERN = [150, 75, 150] as const;
@@ -17,6 +21,61 @@ export type ActiveGestureAlert = {
   snapshotUrl: string;
   remainingSeconds: number;
 };
+
+function copySocketBinary(binary: GestureSocketBinary): ArrayBuffer | null {
+  let source: Uint8Array;
+  if (binary instanceof ArrayBuffer) {
+    source = new Uint8Array(binary);
+  } else if (ArrayBuffer.isView(binary)) {
+    source = new Uint8Array(binary.buffer, binary.byteOffset, binary.byteLength);
+  } else if (
+    binary?.type === 'Buffer' &&
+    Array.isArray(binary.data) &&
+    binary.data.every(
+      (value) => Number.isInteger(value) && value >= 0 && value <= 255,
+    )
+  ) {
+    source = Uint8Array.from(binary.data);
+  } else {
+    return null;
+  }
+  if (source.byteLength === 0) return null;
+  const copy = new Uint8Array(source.byteLength);
+  copy.set(source);
+  return copy.buffer;
+}
+
+export function gesturePayloadToEvent(
+  payload: GestureFirstHandDetectedPayload,
+  expectedAuctionId: string,
+  nowMs = Date.now(),
+): GestureFirstHandEvent | null {
+  if (
+    payload.auctionId !== expectedAuctionId ||
+    payload.snapshotMimeType !== 'image/jpeg' ||
+    typeof payload.eventId !== 'string' ||
+    !payload.eventId
+  ) {
+    return null;
+  }
+  const capturedAtMs = Date.parse(payload.capturedAt);
+  const expiresAtMs = Date.parse(payload.expiresAt);
+  if (
+    !Number.isFinite(capturedAtMs) ||
+    !Number.isFinite(expiresAtMs) ||
+    expiresAtMs <= nowMs
+  ) {
+    return null;
+  }
+  const bytes = copySocketBinary(payload.snapshot);
+  if (!bytes) return null;
+  return {
+    eventId: payload.eventId,
+    capturedAt: payload.capturedAt,
+    expiresAt: payload.expiresAt,
+    snapshot: new Blob([bytes], { type: 'image/jpeg' }),
+  };
+}
 
 type BrowserWindow = Window &
   typeof globalThis & {

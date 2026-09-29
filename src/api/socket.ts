@@ -116,6 +116,26 @@ export type LotStageChangedPayload = {
   } | null;
 };
 
+export type SerializedNodeBuffer = {
+  type: 'Buffer';
+  data: number[];
+};
+
+export type GestureSocketBinary =
+  | ArrayBuffer
+  | ArrayBufferView
+  | SerializedNodeBuffer;
+
+export type GestureFirstHandDetectedPayload = {
+  eventId: string;
+  auctionId: string;
+  capturedAt: string;
+  expiresAt: string;
+  personBox: { x: number; y: number; width: number; height: number };
+  snapshotMimeType: 'image/jpeg';
+  snapshot: GestureSocketBinary;
+};
+
 type CommerceServerToClientEvents = {
   'bid:price-updated': (payload: BidPriceUpdatedPayload) => void;
   'bid:office-recorded': (payload: OfficeBidRecordedPayload) => void;
@@ -123,6 +143,7 @@ type CommerceServerToClientEvents = {
   'lot:winner-announced': (payload: LotWinnerAnnouncedPayload) => void;
   'sale:won': (payload: SaleWonPayload) => void;
   'lot:stage-changed': (payload: LotStageChangedPayload) => void;
+  'gesture:first-hand-detected': (payload: GestureFirstHandDetectedPayload) => void;
   'commerce:error': (payload: { message: string }) => void;
 };
 

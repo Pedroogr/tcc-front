@@ -5,7 +5,10 @@ import {
   OperatorApiError,
   searchOperatorBuyers,
 } from '@/api/operatorApi';
-import { createOperatorCommerceSocket } from '@/api/socket';
+import {
+  createOperatorCommerceSocket,
+  type GestureFirstHandDetectedPayload,
+} from '@/api/socket';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -26,6 +29,7 @@ import { Input } from '@/components/ui/input';
 import type { OperatorBuyer, OperatorSession } from '@/types/operator';
 import { GestureFirstHandAlert } from './GestureFirstHandAlert';
 import {
+  gesturePayloadToEvent,
   useGestureFirstHandAlert,
   type GestureFirstHandEvent,
 } from './gesture-alert';
@@ -69,7 +73,7 @@ export function OperatorBidPage({
   onAuthoritativeConflict,
   onClearNotice,
   onLogout,
-  gestureEvent = null,
+  gestureEvent,
 }: OperatorBidPageProps) {
   const [query, setQuery] = useState('');
   const [buyers, setBuyers] = useState<OperatorBuyer[]>([]);
@@ -82,8 +86,18 @@ export function OperatorBidPage({
   const [online, setOnline] = useState(() => navigator.onLine);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [realtimeGesture, setRealtimeGesture] = useState<{
+    auctionId: string;
+    event: GestureFirstHandEvent;
+  } | null>(null);
   const lot = session.currentLot;
-  const gestureAlert = useGestureFirstHandAlert(gestureEvent);
+  const realtimeEvent =
+    realtimeGesture?.auctionId === session.operatorAccess.auctionId
+      ? realtimeGesture.event
+      : null;
+  const gestureAlert = useGestureFirstHandAlert(
+    gestureEvent === undefined ? realtimeEvent : gestureEvent,
+  );
 
   useEffect(() => {
     const socket = createOperatorCommerceSocket(token);
@@ -100,12 +114,25 @@ export function OperatorBidPage({
     const handleDisconnect = () => setConnected(false);
     const handleOnline = () => setOnline(true);
     const handleOffline = () => setOnline(false);
+    const handleGesture = (payload: GestureFirstHandDetectedPayload) => {
+      const nextEvent = gesturePayloadToEvent(
+        payload,
+        session.operatorAccess.auctionId,
+      );
+      if (nextEvent) {
+        setRealtimeGesture({
+          auctionId: session.operatorAccess.auctionId,
+          event: nextEvent,
+        });
+      }
+    };
 
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     socket.on('connect_error', handleDisconnect);
     socket.on('lot:stage-changed', reconcile);
     socket.on('bid:price-updated', reconcile);
+    socket.on('gesture:first-hand-detected', handleGesture);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 

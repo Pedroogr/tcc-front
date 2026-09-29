@@ -71,6 +71,23 @@ async function setupOperatorSocket(context: BrowserContext) {
 
   return async (event: string, payload: unknown) => {
     await auctionJoined;
+    if (
+      event === 'gesture:first-hand-detected' &&
+      payload &&
+      typeof payload === 'object' &&
+      'snapshot' in payload &&
+      payload.snapshot instanceof Uint8Array
+    ) {
+      const { snapshot, ...metadata } = payload;
+      commerceSocket?.send(
+        `451-${JSON.stringify([
+          event,
+          { ...metadata, snapshot: { _placeholder: true, num: 0 } },
+        ])}`,
+      );
+      commerceSocket?.send(Buffer.from(snapshot));
+      return;
+    }
     commerceSocket?.send(`42${JSON.stringify([event, payload])}`);
   };
 }
@@ -377,5 +394,96 @@ test.describe('operator bidding', () => {
     await expect(page.getByText(/R\$\s*1\.300/).first()).toBeVisible();
     await expect(page.getByLabel('Buscar comprador')).toHaveValue('');
     await expect(page.getByLabel('Valor do lance')).toHaveValue('');
+  });
+
+  test('shows one mobile alert for a binary gesture event and keeps bidding usable', async ({
+    context,
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await storeOperatorToken(context);
+    const emitOperatorEvent = await setupOperatorSocket(context);
+    await context.addInitScript(() => {
+      const original = URL.createObjectURL.bind(URL);
+      Object.defineProperty(window, '__gestureObjectUrlCount', {
+        configurable: true,
+        writable: true,
+        value: 0,
+      });
+      URL.createObjectURL = (blob: Blob) => {
+        const testWindow = window as Window & { __gestureObjectUrlCount?: number };
+        testWindow.__gestureObjectUrlCount =
+          (testWindow.__gestureObjectUrlCount ?? 0) + 1;
+        return original(blob);
+      };
+    });
+    await context.route('http://localhost:3000/operator/session', (route) =>
+      route.fulfill(json(session())),
+    );
+    await context.route(/http:\/\/localhost:3000\/operator\/buyers\?.*/, (route) =>
+      route.fulfill(
+        json([{ id: 'buyer-1', name: 'Maria Silva', documentLast4: '1234' }]),
+      ),
+    );
+
+    await page.goto('/operator');
+    await expect(page.getByRole('heading', { name: 'Lote 2' })).toBeVisible();
+
+    const jpeg = Buffer.from(
+      '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABBQJ//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9oADAMBAAIAAwAAABD/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/EH//xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/EH//xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/EH//2Q==',
+      'base64',
+    );
+    const now = Date.now();
+    const gesture = {
+      eventId: 'gesture-1',
+      auctionId: 'auction-1',
+      capturedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + 3_000).toISOString(),
+      snapshotMimeType: 'image/jpeg',
+      snapshot: jpeg,
+    };
+
+    await emitOperatorEvent('gesture:first-hand-detected', {
+      ...gesture,
+      eventId: 'wrong-auction',
+      auctionId: 'auction-2',
+    });
+    await expect(page.getByRole('alert', { name: 'Primeira mão detectada' })).toHaveCount(0);
+
+    await emitOperatorEvent('gesture:first-hand-detected', gesture);
+    const alert = page.getByRole('alert', { name: 'Primeira mão detectada' });
+    await expect(alert).toBeVisible();
+    await expect(alert.getByRole('img')).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as Window & { __gestureObjectUrlCount?: number })
+              .__gestureObjectUrlCount,
+        ),
+      )
+      .toBe(1);
+
+    await emitOperatorEvent('gesture:first-hand-detected', gesture);
+    await page.waitForTimeout(300);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as Window & { __gestureObjectUrlCount?: number })
+              .__gestureObjectUrlCount,
+        ),
+      )
+      .toBe(1);
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
+      .toBe(true);
+
+    await expect(alert).toBeHidden({ timeout: 5_000 });
+    await page.getByLabel('Buscar comprador').fill('Maria');
+    await page.getByRole('button', { name: 'Maria Silva · final 1234' }).click();
+    await page.getByLabel('Valor do lance').fill('1200');
+    await page.getByRole('button', { name: 'Revisar lance' }).click();
+    await expect(page.getByRole('dialog')).toContainText('Maria Silva');
   });
 });
