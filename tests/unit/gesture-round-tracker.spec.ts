@@ -108,6 +108,24 @@ describe('GestureRoundTracker stability and ordering', () => {
     expect(selected).not.toHaveProperty('trackId');
   });
 
+  it('does not create a second winner when a held hand crosses another track', () => {
+    const tracker = new GestureRoundTracker();
+    tracker.update([person(100, true), person(600, false)], 0);
+    tracker.update([person(180, true), person(520, false)], 130);
+    const selected = tracker.update([person(260, true), person(440, false)], 260);
+
+    expect(selected?.raisedAtMs).toBe(0);
+    expect(
+      tracker.update([person(420, true), person(280, false)], 2_000),
+    ).toBe(selected);
+    expect(
+      tracker.update([person(600, true), person(100, false)], 5_260),
+    ).toBeNull();
+    expect(
+      tracker.update([person(620, true), person(80, false)], 6_000),
+    ).toBeNull();
+  });
+
   it('forgets an absent track after three seconds', () => {
     const tracker = new GestureRoundTracker();
     tracker.update([person(100, false)], 0);

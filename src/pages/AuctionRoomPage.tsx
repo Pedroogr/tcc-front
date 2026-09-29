@@ -155,7 +155,7 @@ export function AuctionRoomPage({
                 <Button asChild size="sm" variant="outline">
                   <a href={`/gesture-station/${encodeURIComponent(auction.id)}`}>
                     <Hand />
-                    Estação de gestos
+                    Abrir estação de gestos
                   </a>
                 </Button>
               )}

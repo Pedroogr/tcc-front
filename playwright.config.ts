@@ -4,6 +4,7 @@ const testPort = process.env.PLAYWRIGHT_PORT ?? '5173';
 
 export default defineConfig({
   testDir: './tests',
+  testIgnore: '**/unit/**',
   fullyParallel: true,
   reporter: [['list']],
   use: { baseURL: `http://127.0.0.1:${testPort}`, trace: 'retain-on-failure' },
