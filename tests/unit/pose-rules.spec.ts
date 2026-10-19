@@ -73,23 +73,55 @@ describe('PoC raised-hand rules', () => {
     return person;
   }
 
-  it('requires the wrist to be strictly more than 15 pixels above its shoulder', () => {
+  it('requires a scale-relative margin above the shoulder when the elbow is unavailable', () => {
     const person = validUpperBody();
-    person.keypoints[9] = point(40, 85, 0.9);
+    person.keypoints[9] = point(40, 100, 0.9);
     expect(getRaisedHandSide(person)).toBe(null);
 
-    person.keypoints[9] = point(40, 84.99, 0.9);
+    person.keypoints[9] = point(40, 99.99, 0.9);
+    expect(getRaisedHandSide(person)).toBe(null);
+
+    person.keypoints[9] = point(40, 90, 0.9);
     expect(getRaisedHandSide(person)).toBe('left');
   });
 
-  it('rejects a raised wrist when a reliable elbow is 80 pixels or more below the shoulder', () => {
+  it('accepts a bent raised forearm with the wrist near the shoulder', () => {
     const person = validUpperBody();
-    person.keypoints[9] = point(40, 70, 0.9);
-    person.keypoints[7] = point(40, 180, 0.9);
-    expect(getRaisedHandSide(person)).toBe(null);
+    person.keypoints[9] = point(40, 108, 0.9);
+    person.keypoints[7] = point(40, 160, 0.9);
 
-    person.keypoints[7] = point(40, 179.99, 0.9);
     expect(getRaisedHandSide(person)).toBe('left');
+  });
+
+  it('classifies equivalent raised arms consistently at different scales', () => {
+    const nearby = validUpperBody();
+    nearby.keypoints[9] = point(40, 70, 0.9);
+    nearby.keypoints[7] = point(40, 170, 0.9);
+
+    const distant = pose(200, 360);
+    distant.keypoints[5] = point(80, 200, 0.9);
+    distant.keypoints[6] = point(160, 200, 0.9);
+    distant.keypoints[9] = point(80, 140, 0.9);
+    distant.keypoints[7] = point(80, 340, 0.9);
+
+    expect(getRaisedHandSide(nearby)).toBe('left');
+    expect(getRaisedHandSide(distant)).toBe('left');
+  });
+
+  it('does not treat a horizontal forearm near the shoulder as raised', () => {
+    const person = validUpperBody();
+    person.keypoints[7] = point(20, 105, 0.9);
+    person.keypoints[9] = point(80, 105, 0.9);
+
+    expect(getRaisedHandSide(person)).toBe(null);
+  });
+
+  it('does not treat a shallow, nearly horizontal forearm as raised', () => {
+    const person = validUpperBody();
+    person.keypoints[7] = point(20, 108, 0.9);
+    person.keypoints[9] = point(80, 101, 0.9);
+
+    expect(getRaisedHandSide(person)).toBe(null);
   });
 
   it('ignores an unreliable elbow but requires reliable shoulder and wrist', () => {

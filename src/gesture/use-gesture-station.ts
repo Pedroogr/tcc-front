@@ -325,11 +325,6 @@ export class GestureStationController {
       this.updateState({ delivery: 'offline' });
       return;
     }
-    if (!this.state.reliable) {
-      this.updateState({ delivery: 'unreliable' });
-      return;
-    }
-
     this.updateState({ delivery: 'sending' });
     try {
       const snapshot = await this.dependencies.createSnapshot(

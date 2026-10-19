@@ -6,10 +6,12 @@ import type {
 
 export const MIN_KEYPOINT_CONFIDENCE = 0.35;
 export const MIN_PERSON_CONFIDENCE = 0.25;
-export const RAISE_MARGIN = 15;
 export const MIN_BOX_WIDTH = 45;
 export const MIN_BOX_HEIGHT = 90;
-export const MAX_ELBOW_BELOW_SHOULDER = 80;
+export const MAX_WRIST_BELOW_SHOULDER_RATIO = 0.1;
+export const MIN_FOREARM_RISE_RATIO = 0.03;
+export const MIN_WRIST_ABOVE_SHOULDER_RATIO = 0.03;
+export const MIN_FOREARM_SLOPE = 0.25;
 
 const NOSE = 0;
 const LEFT_EYE = 1;
@@ -56,32 +58,43 @@ export function isValidPerson(person: PersonPose) {
 }
 
 function isSideRaised(
-  keypoints: PoseKeypoint[],
+  person: PersonPose,
   shoulderIndex: number,
   elbowIndex: number,
   wristIndex: number,
 ) {
+  const { keypoints } = person;
   const shoulder = keypoints[shoulderIndex];
   const elbow = keypoints[elbowIndex];
   const wrist = keypoints[wristIndex];
   if (!isReliable(shoulder) || !isReliable(wrist)) {
     return false;
   }
-  if (wrist.y >= shoulder.y - RAISE_MARGIN) {
-    return false;
+
+  const personHeight = Math.max(1, person.box.y2 - person.box.y1);
+  if (!isReliable(elbow)) {
+    return wrist.y <= shoulder.y - personHeight * MIN_WRIST_ABOVE_SHOULDER_RATIO;
   }
-  return !isReliable(elbow) || elbow.y < shoulder.y + MAX_ELBOW_BELOW_SHOULDER;
+
+  const wristNearOrAboveShoulder =
+    wrist.y <= shoulder.y + personHeight * MAX_WRIST_BELOW_SHOULDER_RATIO;
+  const forearmRise = elbow.y - wrist.y;
+  const forearmRun = Math.abs(elbow.x - wrist.x);
+  const forearmPointsUp =
+    forearmRise >= personHeight * MIN_FOREARM_RISE_RATIO &&
+    forearmRise >= forearmRun * MIN_FOREARM_SLOPE;
+  return wristNearOrAboveShoulder && forearmPointsUp;
 }
 
 export function getRaisedHandSide(person: PersonPose): RaisedHandSide {
   const left = isSideRaised(
-    person.keypoints,
+    person,
     LEFT_SHOULDER,
     LEFT_ELBOW,
     LEFT_WRIST,
   );
   const right = isSideRaised(
-    person.keypoints,
+    person,
     RIGHT_SHOULDER,
     RIGHT_ELBOW,
     RIGHT_WRIST,

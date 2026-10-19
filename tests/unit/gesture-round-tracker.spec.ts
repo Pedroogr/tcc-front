@@ -97,6 +97,21 @@ describe('GestureRoundTracker stability and ordering', () => {
     expect(tracker.update([person(100, true)], 6_960)?.raisedAtMs).toBe(6_700);
   });
 
+  it('rearms after 500 clear milliseconds without waiting for the five-second display window', () => {
+    const tracker = new GestureRoundTracker();
+    tracker.update([person(100, true)], 0);
+    tracker.update([person(100, true)], 130);
+    expect(tracker.update([person(100, true)], 260)?.raisedAtMs).toBe(0);
+
+    expect(tracker.update([person(100, false)], 400)?.raisedAtMs).toBe(0);
+    expect(tracker.update([person(100, false)], 899)?.raisedAtMs).toBe(0);
+    expect(tracker.update([person(100, false)], 900)).toBeNull();
+
+    expect(tracker.update([person(100, true)], 1_000)).toBeNull();
+    expect(tracker.update([person(100, true)], 1_130)).toBeNull();
+    expect(tracker.update([person(100, true)], 1_260)?.raisedAtMs).toBe(1_000);
+  });
+
   it('matches a moving person long enough to confirm without exposing a track id', () => {
     const tracker = new GestureRoundTracker();
 

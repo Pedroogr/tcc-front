@@ -75,11 +75,24 @@ export class GestureRoundTracker {
 
     if (this.mode === 'selected' && this.selection) {
       if (sampledAtMs < this.selection.expiresAtMs) {
-        return this.selection;
+        const anyRaised = visibleTracks.some((track) => track.raised);
+        if (visibleTracks.length === 0 || anyRaised) {
+          this.clearSinceMs = null;
+        } else if (this.clearSinceMs === null) {
+          this.clearSinceMs = sampledAtMs;
+        } else if (sampledAtMs - this.clearSinceMs >= ROUND_CLEAR_TO_REARM_MS) {
+          this.selection = null;
+          this.mode = 'armed';
+          this.clearSinceMs = null;
+          this.tracks.forEach(clearRaisedState);
+        }
+
+        if (this.selection) return this.selection;
+      } else {
+        this.selection = null;
+        this.mode = 'cooldown';
+        this.clearSinceMs = null;
       }
-      this.selection = null;
-      this.mode = 'cooldown';
-      this.clearSinceMs = null;
     }
 
     if (this.mode === 'cooldown') {

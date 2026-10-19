@@ -1,6 +1,6 @@
 import type { PersonPose } from './pose-types';
 
-export const POSE_MODEL_URL = '/models/yolo11s-pose.onnx';
+export const POSE_MODEL_URL = '/models/yolo11n-pose.onnx';
 
 export type PoseBackend = 'webgpu' | 'wasm';
 

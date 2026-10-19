@@ -47,7 +47,7 @@ function deliveryLabel(delivery: string) {
   if (delivery === 'sent') return 'Alerta entregue à API';
   if (delivery === 'failed') return 'Falha ao entregar o alerta';
   if (delivery === 'offline') return 'Sem rede: alerta não enviado';
-  if (delivery === 'unreliable') return 'Detecção lenta: alertas pausados';
+  if (delivery === 'unreliable') return 'Detecção lenta: alertas podem atrasar';
   return 'Aguardando primeira mão';
 }
 

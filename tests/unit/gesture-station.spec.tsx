@@ -260,6 +260,29 @@ describe('GestureStationController lifecycle', () => {
     expect(harness.states.some((state) => state.delivery === 'offline')).toBe(true);
   });
 
+  it('still delivers a stable gesture when inference is slower than five FPS', async () => {
+    const times = [0, 10_000, 20_000, 20_130, 20_260];
+    const harness = controllerHarness({
+      now: vi.fn(() => times.shift() ?? 20_260),
+    });
+    harness.estimator.detect.mockImplementation((_bitmap, sampledAtMs) =>
+      Promise.resolve({
+        sampledAtMs,
+        inferenceMs: 1_000,
+        poses: sampledAtMs >= 20_000 ? [raisedPerson()] : [],
+      }),
+    );
+    await harness.controller.start('');
+
+    for (let frame = 0; frame < 5; frame += 1) {
+      harness.scheduled.shift()?.();
+      await flush();
+    }
+
+    expect(harness.states.some((state) => state.reliable === false)).toBe(true);
+    await waitFor(() => expect(harness.dependencies.submitEvent).toHaveBeenCalledOnce());
+  });
+
   it('can retry initialization after a model failure and releases the failed camera', async () => {
     const firstEstimator = {
       start: vi.fn(() => Promise.reject(new Error('modelo indisponível'))),

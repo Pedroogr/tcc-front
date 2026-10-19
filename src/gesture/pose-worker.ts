@@ -5,7 +5,8 @@ import { isValidPerson } from './pose-rules';
 import type { PoseBackend, PoseWorkerRequest, PoseWorkerResponse } from './pose-estimator';
 import { decodeYoloPose, type LetterboxTransform } from './yolo-pose';
 
-const INPUT_SIZE = 1280;
+const DEFAULT_INPUT_SIZE = 640;
+const MAX_WASM_THREADS = 8;
 const INPUT_NAME = 'images';
 const OUTPUT_NAME = 'output0';
 const CHANNELS = 3;
@@ -13,6 +14,20 @@ const CHANNELS = 3;
 const workerScope = self as unknown as DedicatedWorkerGlobalScope;
 let session: ort.InferenceSession | null = null;
 let canvas: OffscreenCanvas | null = null;
+// O ONNX exportado tem entrada fixa; lemos do modelo para aceitar 640 ou 1280 sem mudar código.
+let inputSize = DEFAULT_INPUT_SIZE;
+
+// Threads no WASM exigem SharedArrayBuffer, disponível só com cross-origin isolation (COOP/COEP).
+function wasmThreadCount() {
+  if (!workerScope.crossOriginIsolated) return 1;
+  return Math.max(1, Math.min(navigator.hardwareConcurrency || 1, MAX_WASM_THREADS));
+}
+
+function modelInputSize(activeSession: ort.InferenceSession) {
+  const input = activeSession.inputMetadata.find((metadata) => metadata.name === INPUT_NAME);
+  const side = input?.isTensor ? input.shape[3] : undefined;
+  return typeof side === 'number' && side > 0 ? side : DEFAULT_INPUT_SIZE;
+}
 
 function send(response: PoseWorkerResponse) {
   workerScope.postMessage(response);
@@ -29,33 +44,36 @@ async function createSession(modelUrl: string) {
       executionProviders: ['webgpu'],
       graphOptimizationLevel: 'all',
     });
-  } catch {
+  } catch (error) {
+    console.warn('WebGPU indisponível, usando CPU (WASM):', error);
     backend = 'wasm';
-    ort.env.wasm.numThreads = 1;
+    ort.env.wasm.numThreads = wasmThreadCount();
     session = await ort.InferenceSession.create(modelUrl, {
       executionProviders: ['wasm'],
       graphOptimizationLevel: 'all',
     });
+    console.info(`Inferência WASM com ${ort.env.wasm.numThreads} thread(s).`);
   }
+  inputSize = modelInputSize(session);
   return backend;
 }
 
 function frameToTensor(bitmap: ImageBitmap) {
-  canvas ??= new OffscreenCanvas(INPUT_SIZE, INPUT_SIZE);
+  canvas ??= new OffscreenCanvas(inputSize, inputSize);
   const context = canvas.getContext('2d', { willReadFrequently: true });
   if (!context) throw new Error('Canvas de inferência indisponível.');
 
-  const scale = Math.min(INPUT_SIZE / bitmap.width, INPUT_SIZE / bitmap.height);
+  const scale = Math.min(inputSize / bitmap.width, inputSize / bitmap.height);
   const scaledWidth = bitmap.width * scale;
   const scaledHeight = bitmap.height * scale;
-  const padX = (INPUT_SIZE - scaledWidth) / 2;
-  const padY = (INPUT_SIZE - scaledHeight) / 2;
+  const padX = (inputSize - scaledWidth) / 2;
+  const padY = (inputSize - scaledHeight) / 2;
   context.fillStyle = 'rgb(114, 114, 114)';
-  context.fillRect(0, 0, INPUT_SIZE, INPUT_SIZE);
+  context.fillRect(0, 0, inputSize, inputSize);
   context.drawImage(bitmap, padX, padY, scaledWidth, scaledHeight);
 
-  const pixels = context.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE).data;
-  const planeSize = INPUT_SIZE * INPUT_SIZE;
+  const pixels = context.getImageData(0, 0, inputSize, inputSize).data;
+  const planeSize = inputSize * inputSize;
   const chw = new Float32Array(CHANNELS * planeSize);
   for (let pixel = 0; pixel < planeSize; pixel += 1) {
     const rgba = pixel * 4;
@@ -65,14 +83,14 @@ function frameToTensor(bitmap: ImageBitmap) {
   }
 
   const letterbox: LetterboxTransform = {
-    inputWidth: INPUT_SIZE,
-    inputHeight: INPUT_SIZE,
+    inputWidth: inputSize,
+    inputHeight: inputSize,
     scale,
     padX,
     padY,
   };
   return {
-    tensor: new ort.Tensor('float32', chw, [1, CHANNELS, INPUT_SIZE, INPUT_SIZE]),
+    tensor: new ort.Tensor('float32', chw, [1, CHANNELS, inputSize, inputSize]),
     letterbox,
   };
 }

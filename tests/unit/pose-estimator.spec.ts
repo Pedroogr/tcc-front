@@ -36,7 +36,7 @@ describe('PoseEstimator worker protocol', () => {
     const started = estimator.start();
     expect(latestRequest(worker)).toEqual({
       type: 'init',
-      modelUrl: '/models/yolo11s-pose.onnx',
+      modelUrl: '/models/yolo11n-pose.onnx',
     });
 
     worker.respond({ type: 'ready', backend: 'webgpu' });
