@@ -60,6 +60,7 @@ const inPistaLot = {
   quantity: 1,
   initialPrice: '1000',
   currentPrice: '1250',
+  hasWinningBid: true,
   auctionId: 'auction-1',
   media: [],
   createdAt: TS,
@@ -418,6 +419,67 @@ test.describe('auction room commerce', () => {
 
     await expect(page.getByText('O lance deve ser múltiplo de R$ 5.')).toBeVisible();
     expect(bidPostRequests).toBe(0);
+  });
+
+  test('does not send a bid equal to the current price', async ({ context, page }) => {
+    let bidPostRequests = 0;
+
+    await setupCommonRoutes(context);
+    await context.unroute('**/lots/*/bids');
+    await context.route('**/lots/*/bids', (route) => {
+      if (route.request().method() === 'POST') {
+        bidPostRequests += 1;
+      }
+      return route.fulfill(json(officeHistory));
+    });
+    await loginAndEnterRoom(page, buyer.email);
+
+    await page.getByLabel('Seu lance').fill('1250');
+    await page.getByRole('button', { name: 'Dar lance' }).click();
+
+    await expect(
+      page.getByText('O lance precisa superar o valor atual.'),
+    ).toBeVisible();
+    expect(bidPostRequests).toBe(0);
+  });
+
+  test('allows the opening bid to equal the initial price', async ({ context, page }) => {
+    let bidPostRequests = 0;
+    const openingLot = {
+      ...inPistaLot,
+      initialPrice: '1250',
+      currentPrice: '1250',
+      hasWinningBid: false,
+    };
+
+    await setupCommonRoutes(context);
+    await context.unroute('**/lots');
+    await context.route('**/lots', (route) => route.fulfill(json([openingLot])));
+    await context.unroute('**/lots/*/bids');
+    await context.route('**/lots/*/bids', (route) => {
+      if (route.request().method() === 'POST') {
+        bidPostRequests += 1;
+        return route.fulfill(
+          json({
+            id: 'bid-opening',
+            lotId: openingLot.id,
+            amount: '1250',
+            status: 'WINNING',
+            createdAt: TS,
+          }),
+        );
+      }
+      return route.fulfill(json([]));
+    });
+    await loginAndEnterRoom(page, buyer.email);
+
+    await page.getByLabel('Seu lance').fill('1250');
+    await page.getByRole('button', { name: 'Dar lance' }).click();
+
+    await expect.poll(() => bidPostRequests).toBe(1);
+    await expect(
+      page.getByText('O lance precisa superar o valor atual.'),
+    ).toHaveCount(0);
   });
 
   test('clears a buyer announcement before another account logs in', async ({

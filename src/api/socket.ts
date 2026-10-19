@@ -113,6 +113,7 @@ export type LotStageChangedPayload = {
     status: string;
     currentPrice?: string | null;
     nextMinimumBid?: string | null;
+    hasWinningBid: boolean;
   } | null;
 };
 

@@ -697,7 +697,9 @@ function App() {
     socket.on('bid:price-updated', (payload) => {
       setLots((current) =>
         current.map((lot) =>
-          lot.id === payload.lotId ? { ...lot, currentPrice: payload.amount } : lot,
+          lot.id === payload.lotId
+            ? { ...lot, currentPrice: payload.amount, hasWinningBid: true }
+            : lot,
         ),
       );
     });
@@ -1186,6 +1188,18 @@ function App() {
       return;
     }
 
+    const currentAmount = Number(
+      inPistaLot.currentPrice ?? inPistaLot.initialPrice ?? 0,
+    );
+    if (
+      inPistaLot.hasWinningBid &&
+      Number.isFinite(currentAmount) &&
+      amount <= currentAmount
+    ) {
+      setError('O lance precisa superar o valor atual.');
+      return;
+    }
+
     setIsSubmitting(true);
     setError('');
 
@@ -1195,7 +1209,9 @@ function App() {
       // demais participantes recebem a atualizacao pelo socket.
       setLots((current) =>
         current.map((lot) =>
-          lot.id === bid.lotId ? { ...lot, currentPrice: bid.amount } : lot,
+          lot.id === bid.lotId
+            ? { ...lot, currentPrice: bid.amount, hasWinningBid: true }
+            : lot,
         ),
       );
     } catch (submitError) {

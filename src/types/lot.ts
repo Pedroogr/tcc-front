@@ -13,6 +13,7 @@ export type Lot = {
   // Preco publico anonimo: derivado do lance vencedor pelo backend. Nunca
   // acompanha historico ou identidade de quem lancou (RF06).
   currentPrice?: string | number | null;
+  hasWinningBid?: boolean;
   status: string;
   auctionId?: string | null;
   auction?: {
