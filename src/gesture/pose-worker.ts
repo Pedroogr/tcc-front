@@ -2,7 +2,11 @@
 
 import * as ort from 'onnxruntime-web/webgpu';
 import { isValidPerson } from './pose-rules';
-import type { PoseBackend, PoseWorkerRequest, PoseWorkerResponse } from './pose-estimator';
+import type {
+  LocalPoseBackend,
+  PoseWorkerRequest,
+  PoseWorkerResponse,
+} from './pose-estimator';
 import { decodeYoloPose, type LetterboxTransform } from './yolo-pose';
 
 const DEFAULT_INPUT_SIZE = 640;
@@ -38,7 +42,7 @@ function messageFrom(error: unknown) {
 }
 
 async function createSession(modelUrl: string) {
-  let backend: PoseBackend = 'webgpu';
+  let backend: LocalPoseBackend = 'webgpu';
   try {
     session = await ort.InferenceSession.create(modelUrl, {
       executionProviders: ['webgpu'],

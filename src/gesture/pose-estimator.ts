@@ -2,7 +2,8 @@ import type { PersonPose } from './pose-types';
 
 export const POSE_MODEL_URL = '/models/yolo11n-pose.onnx';
 
-export type PoseBackend = 'webgpu' | 'wasm';
+export type LocalPoseBackend = 'webgpu' | 'wasm';
+export type PoseBackend = 'remote-cuda' | LocalPoseBackend;
 
 export type PoseWorkerRequest =
   | { type: 'init'; modelUrl: string }
@@ -20,8 +21,14 @@ export type PoseDetectionFrame = {
   poses: PersonPose[];
 };
 
+export interface PoseEstimatorPort {
+  start(): Promise<PoseBackend>;
+  detect(bitmap: ImageBitmap, sampledAtMs: number): Promise<PoseDetectionFrame>;
+  dispose(): void;
+}
+
 export type PoseWorkerResponse =
-  | { type: 'ready'; backend: PoseBackend }
+  | { type: 'ready'; backend: LocalPoseBackend }
   | ({ type: 'result'; requestId: string } & PoseDetectionFrame)
   | { type: 'error'; requestId?: string; message: string };
 
@@ -37,14 +44,14 @@ function defaultWorkerFactory() {
   return new Worker(new URL('./pose-worker.ts', import.meta.url), { type: 'module' });
 }
 
-export class PoseEstimator {
+export class PoseEstimator implements PoseEstimatorPort {
   private readonly workerFactory: WorkerFactory;
   private worker: Worker | null = null;
-  private startPromise: Promise<PoseBackend> | null = null;
-  private resolveStart: ((backend: PoseBackend) => void) | null = null;
+  private startPromise: Promise<LocalPoseBackend> | null = null;
+  private resolveStart: ((backend: LocalPoseBackend) => void) | null = null;
   private rejectStart: ((error: Error) => void) | null = null;
   private pendingDetection: PendingDetection | null = null;
-  private backend: PoseBackend | null = null;
+  private backend: LocalPoseBackend | null = null;
   private disposed = false;
   private requestSequence = 0;
 
@@ -66,7 +73,7 @@ export class PoseEstimator {
     this.worker.onerror = (event: ErrorEvent) => {
       this.failCurrentOperation(event.message || 'O worker de pose falhou.');
     };
-    this.startPromise = new Promise<PoseBackend>((resolve, reject) => {
+    this.startPromise = new Promise<LocalPoseBackend>((resolve, reject) => {
       this.resolveStart = resolve;
       this.rejectStart = reject;
     });
