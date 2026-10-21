@@ -31,6 +31,7 @@ import {
 } from './gesture-server-settings';
 import type { NormalizedBox, PersonPose } from './pose-types';
 import { ThroughputMonitor, type ThroughputStatus } from './throughput-monitor';
+import type { GestureBenchmarkFrameTiming } from './gesture-benchmark';
 
 export type GestureStationAccess =
   | { status: 'authorized'; auction: Auction }
@@ -172,6 +173,7 @@ export class GestureStationController {
   private readonly video: HTMLVideoElement;
   private readonly onState: (state: GestureStationState) => void;
   private readonly dependencies: GestureStationDependencies;
+  private readonly onBenchmarkFrame?: (frame: GestureBenchmarkFrameTiming) => void;
   private state = initialState();
   private generation = 0;
   private stream: MediaStream | null = null;
@@ -187,11 +189,13 @@ export class GestureStationController {
     video: HTMLVideoElement,
     onState: (state: GestureStationState) => void,
     dependencies: GestureStationDependencies = browserDependencies(),
+    onBenchmarkFrame?: (frame: GestureBenchmarkFrameTiming) => void,
   ) {
     this.auctionId = auctionId;
     this.video = video;
     this.onState = onState;
     this.dependencies = dependencies;
+    this.onBenchmarkFrame = onBenchmarkFrame;
     this.onState(this.state);
   }
 
@@ -310,13 +314,14 @@ export class GestureStationController {
 
   private async processFrame(generation: number) {
     let frame: PoseDetectionFrame;
+    const benchmarkSampledAtMs = this.onBenchmarkFrame ? this.dependencies.now() : null;
     try {
       const bitmap = await this.dependencies.createBitmap(this.video);
       if (generation !== this.generation) {
         bitmap.close();
         return;
       }
-      const sampledAtMs = this.dependencies.now();
+      const sampledAtMs = benchmarkSampledAtMs ?? this.dependencies.now();
       frame = await this.estimator!.detect(bitmap, sampledAtMs);
     } catch (error) {
       if (generation === this.generation) this.fail(generation, cameraErrorMessage(error));
@@ -324,9 +329,21 @@ export class GestureStationController {
     }
     if (generation !== this.generation) return;
 
+    const resultReadyAtMs = this.onBenchmarkFrame ? this.dependencies.now() : null;
     const throughput = this.throughput.record(frame.sampledAtMs);
     const selection = this.tracker.update(frame.poses, frame.sampledAtMs);
+    const trackerMs =
+      resultReadyAtMs === null ? null : this.dependencies.now() - resultReadyAtMs;
     this.updateFromFrame(frame, throughput, selection);
+    if (resultReadyAtMs !== null && trackerMs !== null) {
+      this.onBenchmarkFrame?.({
+        sampledAtMs: frame.sampledAtMs,
+        resultReadyAtMs,
+        inferenceMs: frame.inferenceMs,
+        rttMs: frame.rttMs ?? null,
+        trackerMs,
+      });
+    }
     if (selection && selection !== this.lastSelection) {
       this.lastSelection = selection;
       void this.deliver(selection, generation);
@@ -392,6 +409,7 @@ export class GestureStationController {
 export function useGestureStation(
   auctionId: string,
   videoRef: RefObject<HTMLVideoElement | null>,
+  onBenchmarkFrame?: (frame: GestureBenchmarkFrameTiming) => void,
 ) {
   const [state, setState] = useState<GestureStationState>(initialState);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
@@ -438,11 +456,20 @@ export function useGestureStation(
       auctionId,
       videoRef.current,
       setState,
+      undefined,
+      onBenchmarkFrame,
     );
     controllerRef.current.setOnline(navigator.onLine);
     await controllerRef.current.start(selectedCameraId, activeEstimatorSettings);
     await refreshCameras();
-  }, [activeEstimatorSettings, auctionId, refreshCameras, selectedCameraId, videoRef]);
+  }, [
+    activeEstimatorSettings,
+    auctionId,
+    onBenchmarkFrame,
+    refreshCameras,
+    selectedCameraId,
+    videoRef,
+  ]);
 
   const stop = useCallback(() => controllerRef.current?.stop(), []);
 

@@ -5,6 +5,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { Auction } from '@/types/auction';
 import { poseBackendLabel } from './pose-estimator-factory';
 import {
+  gestureBenchmarkEnabled,
+  type GestureBenchmarkFrameTiming,
+} from './gesture-benchmark';
+import { GestureBenchmarkControls } from './GestureBenchmarkControls';
+import {
   loadOwnedGestureAuction,
   useGestureStation,
   type GestureStationAccess,
@@ -54,6 +59,9 @@ function deliveryLabel(delivery: string) {
 
 function StationScreen({ auction }: { auction: Auction }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const benchmarkEnabled = gestureBenchmarkEnabled(window.location.search);
+  const [benchmarkFrame, setBenchmarkFrame] =
+    useState<GestureBenchmarkFrameTiming | null>(null);
   const {
     state,
     cameras,
@@ -65,7 +73,11 @@ function StationScreen({ auction }: { auction: Auction }) {
     updateRemoteToken,
     start,
     stop,
-  } = useGestureStation(auction.id, videoRef);
+  } = useGestureStation(
+    auction.id,
+    videoRef,
+    benchmarkEnabled ? setBenchmarkFrame : undefined,
+  );
   const running = state.phase === 'running';
   const configuring = running || state.phase === 'starting';
   const connectivity =
@@ -268,6 +280,8 @@ function StationScreen({ auction }: { auction: Auction }) {
                 </div>
               </CardContent>
             </Card>
+
+            {benchmarkEnabled && <GestureBenchmarkControls frame={benchmarkFrame} />}
 
             <p className="rounded-xl border border-border bg-muted p-4 text-xs leading-relaxed text-muted-foreground">
               {inferenceMode === 'remote'

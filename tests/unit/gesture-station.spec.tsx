@@ -11,6 +11,7 @@ import {
 } from '@/gesture/use-gesture-station';
 import type { PoseDetectionFrame, PoseEstimator } from '@/gesture/pose-estimator';
 import type { GestureServerSettings } from '@/gesture/gesture-server-settings';
+import type { GestureBenchmarkFrameTiming } from '@/gesture/gesture-benchmark';
 import type { PersonPose, PoseKeypoint } from '@/gesture/pose-types';
 import type { Auction } from '@/types/auction';
 
@@ -104,7 +105,10 @@ const remoteSettings: GestureServerSettings = {
   token: 'runtime-secret',
 };
 
-function controllerHarness(overrides: Partial<GestureStationDependencies> = {}) {
+function controllerHarness(
+  overrides: Partial<GestureStationDependencies> = {},
+  onBenchmarkFrame?: (frame: GestureBenchmarkFrameTiming) => void,
+) {
   const firstStream = fakeStream();
   const states: GestureStationState[] = [];
   const scheduled: Array<() => void> = [];
@@ -143,6 +147,7 @@ function controllerHarness(overrides: Partial<GestureStationDependencies> = {}) 
     fakeVideo(),
     (state) => states.push(state),
     dependencies,
+    onBenchmarkFrame,
   );
   return { controller, dependencies, estimator, firstStream, states, scheduled };
 }
@@ -187,6 +192,7 @@ describe('gesture station authorization', () => {
   });
 
   it('collects the remote token as a per-tab password and renders only safe telemetry', async () => {
+    window.history.replaceState(null, '', '/gesture-station/auction-1');
     sessionStorage.setItem('cattleAuctionActorType', 'AUCTION_HOUSE');
     sessionStorage.setItem('cattleAuctionToken', 'house-token');
     sessionStorage.setItem(
@@ -213,6 +219,29 @@ describe('gesture station authorization', () => {
     expect(screen.getByText('Inferência')).toBeInTheDocument();
     expect(screen.getByText('RTT')).toBeInTheDocument();
     expect(screen.getByText('Desempenho')).toBeInTheDocument();
+    expect(screen.queryByText('Benchmark ativo')).not.toBeInTheDocument();
+  });
+
+  it('shows minimal benchmark controls only when benchmark=1', async () => {
+    window.history.replaceState(null, '', '/gesture-station/auction-1?benchmark=1');
+    sessionStorage.setItem('cattleAuctionActorType', 'AUCTION_HOUSE');
+    sessionStorage.setItem('cattleAuctionToken', 'house-token');
+    sessionStorage.setItem(
+      'cattleAuctionHouse',
+      JSON.stringify({ id: 'house-1', name: 'Escritório Pampa' }),
+    );
+    vi.mocked(listAuctions).mockResolvedValueOnce([ownedAuction]);
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { enumerateDevices: vi.fn(() => Promise.resolve([])) },
+    });
+
+    render(<GestureStationApp auctionId="auction-1" />);
+
+    expect(await screen.findByText('Benchmark ativo')).toBeInTheDocument();
+    expect(screen.getByText('0 amostras')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Zerar' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Exportar JSON' })).toBeInTheDocument();
   });
 });
 
@@ -441,6 +470,35 @@ describe('GestureStationController lifecycle', () => {
       backend: 'remote-cuda',
       inferenceMs: 17.2,
       rttMs: 41.8,
+    });
+  });
+
+  it('publishes benchmark timing after response and tracker processing', async () => {
+    const onBenchmarkFrame = vi.fn();
+    const times = [100, 130, 132];
+    const harness = controllerHarness(
+      { now: vi.fn(() => times.shift() ?? 132) },
+      onBenchmarkFrame,
+    );
+    harness.estimator.detect.mockImplementation((_bitmap, sampledAtMs) =>
+      Promise.resolve({
+        sampledAtMs,
+        inferenceMs: 12,
+        rttMs: 24,
+        poses: [],
+      }),
+    );
+    await harness.controller.start('', remoteSettings);
+
+    harness.scheduled.shift()?.();
+    await flush();
+
+    expect(onBenchmarkFrame).toHaveBeenCalledWith({
+      sampledAtMs: 100,
+      resultReadyAtMs: 130,
+      inferenceMs: 12,
+      rttMs: 24,
+      trackerMs: 2,
     });
   });
 });

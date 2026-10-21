@@ -1,5 +1,17 @@
 # React + TypeScript + Vite
 
+## Benchmark da estação de gestos
+
+A estação mantém a interface operacional normal por padrão. Para coletar métricas destinadas à validação do TCC, acrescente `?benchmark=1` à rota da estação:
+
+```text
+http://localhost:5173/gesture-station/ID_DO_LEILAO?benchmark=1
+```
+
+O modo mostra somente o estado do benchmark, a quantidade de amostras e os botões `Zerar` e `Exportar JSON`. Em memória, ele calcula p50/p95 de resposta, inferência, RTT, tracker, apresentação e captura até apresentação. O JSON exportado contém apenas agregados numéricos; imagens, poses e token não fazem parte do relatório. Recarregar ou fechar a aba descarta as amostras que não foram exportadas.
+
+O procedimento LAN completo e a interpretação das métricas estão em `../tcc-back/gesture-server/docs/lan-validation.md`.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:
