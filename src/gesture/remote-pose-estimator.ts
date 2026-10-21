@@ -22,12 +22,14 @@ export type RemotePoseEstimatorConfig = {
 export type RemotePoseEstimatorDependencies = {
   createSocket?: (url: string) => WebSocket;
   createCanvas?: () => HTMLCanvasElement;
+  now?: () => number;
 };
 
 type DetectionRequest = {
   bitmap: ImageBitmap;
   sampledAtMs: number;
   frameId: number | null;
+  sentAtMs: number | null;
   bitmapClosed: boolean;
   settled: boolean;
   resolve: (frame: PoseDetectionFrame) => void;
@@ -77,6 +79,7 @@ export class RemotePoseEstimator implements PoseEstimatorPort {
   private readonly config: Required<RemotePoseEstimatorConfig>;
   private readonly createSocket: (url: string) => WebSocket;
   private readonly createCanvas: () => HTMLCanvasElement;
+  private readonly now: () => number;
   private socket: WebSocket | null = null;
   private startPromise: Promise<PoseBackend> | null = null;
   private resolveStart: ((backend: PoseBackend) => void) | null = null;
@@ -105,6 +108,7 @@ export class RemotePoseEstimator implements PoseEstimatorPort {
     this.createSocket = dependencies.createSocket ?? ((url) => new WebSocket(url));
     this.createCanvas =
       dependencies.createCanvas ?? (() => document.createElement('canvas'));
+    this.now = dependencies.now ?? (() => performance.now());
   }
 
   start(): Promise<PoseBackend> {
@@ -212,6 +216,7 @@ export class RemotePoseEstimator implements PoseEstimatorPort {
       bitmap,
       sampledAtMs,
       frameId: null,
+      sentAtMs: null,
       bitmapClosed: false,
       settled: false,
       resolve: () => undefined,
@@ -247,6 +252,7 @@ export class RemotePoseEstimator implements PoseEstimatorPort {
     const frameId = this.nextFrameId;
     this.nextFrameId = (this.nextFrameId + 1) >>> 0;
     request.frameId = frameId;
+    request.sentAtMs = this.now();
     try {
       socket.send(encodePoseFrame(frameId, jpeg));
       this.inferenceTimer = setTimeout(() => {
@@ -292,6 +298,10 @@ export class RemotePoseEstimator implements PoseEstimatorPort {
       this.resolveRequest(completed, {
         sampledAtMs: completed.sampledAtMs,
         inferenceMs: message.timings.inferenceMs,
+        rttMs:
+          completed.sentAtMs === null
+            ? 0
+            : Math.max(0, this.now() - completed.sentAtMs),
         poses: message.poses,
       });
       this.promotePending();

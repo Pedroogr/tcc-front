@@ -107,7 +107,11 @@ function frameIdOf(value: SentValue) {
 }
 
 function createHarness(
-  options: { handshakeTimeoutMs?: number; inferenceTimeoutMs?: number } = {},
+  options: {
+    handshakeTimeoutMs?: number;
+    inferenceTimeoutMs?: number;
+    now?: () => number;
+  } = {},
 ) {
   const sockets: FakeWebSocket[] = [];
   const canvases: FakeCanvas[] = [];
@@ -131,6 +135,7 @@ function createHarness(
         canvases.push(canvas);
         return canvas as unknown as HTMLCanvasElement;
       },
+      now: options.now ?? (() => 0),
     },
   );
   return { estimator, sockets, canvases };
@@ -189,7 +194,8 @@ describe('RemotePoseEstimator', () => {
   });
 
   it('compresses a resized JPEG, closes the bitmap and maps the matching pose', async () => {
-    const harness = createHarness();
+    const times = [100, 138];
+    const harness = createHarness({ now: () => times.shift() ?? 138 });
     const socket = await startHarness(harness);
     const source = bitmap();
 
@@ -211,6 +217,7 @@ describe('RemotePoseEstimator', () => {
     await expect(detection).resolves.toEqual({
       sampledAtMs: 1234,
       inferenceMs: 17.5,
+      rttMs: 38,
       poses: [],
     });
   });

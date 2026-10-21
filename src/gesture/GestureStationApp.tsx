@@ -3,6 +3,7 @@ import { ArrowLeft, Camera, Hand, Play, Square, Wifi, WifiOff } from 'lucide-rea
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { Auction } from '@/types/auction';
+import { poseBackendLabel } from './pose-estimator-factory';
 import {
   loadOwnedGestureAuction,
   useGestureStation,
@@ -53,9 +54,32 @@ function deliveryLabel(delivery: string) {
 
 function StationScreen({ auction }: { auction: Auction }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const { state, cameras, selectedCameraId, selectCamera, start, stop } =
-    useGestureStation(auction.id, videoRef);
+  const {
+    state,
+    cameras,
+    selectedCameraId,
+    inferenceMode,
+    remoteConfigured,
+    selectCamera,
+    selectInferenceMode,
+    updateRemoteToken,
+    start,
+    stop,
+  } = useGestureStation(auction.id, videoRef);
   const running = state.phase === 'running';
+  const configuring = running || state.phase === 'starting';
+  const connectivity =
+    inferenceMode === 'local'
+      ? 'Processamento local'
+      : state.backend === 'remote-cuda' && running
+        ? 'Servidor conectado'
+        : state.phase === 'starting'
+          ? 'Conectando ao servidor…'
+          : state.phase === 'error'
+            ? 'Servidor indisponível'
+            : remoteConfigured
+              ? 'Pronto para conectar'
+              : 'Token necessário';
 
   return (
     <main className="min-h-dvh bg-background text-foreground">
@@ -127,6 +151,39 @@ function StationScreen({ auction }: { auction: Auction }) {
               </CardHeader>
               <CardContent className="grid gap-4">
                 <label className="grid gap-2 text-sm font-semibold">
+                  Modo de inferência
+                  <select
+                    aria-label="Modo de inferência"
+                    className="h-11 rounded-md border border-border bg-background px-3"
+                    value={inferenceMode}
+                    onChange={(event) =>
+                      selectInferenceMode(event.target.value as 'local' | 'remote')
+                    }
+                    disabled={configuring}
+                  >
+                    <option value="remote">GPU remota</option>
+                    <option value="local">Navegador local</option>
+                  </select>
+                </label>
+
+                {inferenceMode === 'remote' && (
+                  <label className="grid gap-2 text-sm font-semibold">
+                    Token do servidor de gestos
+                    <input
+                      aria-label="Token do servidor de gestos"
+                      type="password"
+                      autoComplete="off"
+                      className="h-11 rounded-md border border-border bg-background px-3"
+                      placeholder={
+                        remoteConfigured ? 'Token salvo nesta aba' : 'Informe o token da sessão'
+                      }
+                      onChange={(event) => updateRemoteToken(event.target.value)}
+                      disabled={configuring}
+                    />
+                  </label>
+                )}
+
+                <label className="grid gap-2 text-sm font-semibold">
                   Câmera dedicada
                   <select
                     aria-label="Câmera dedicada"
@@ -170,8 +227,34 @@ function StationScreen({ auction }: { auction: Auction }) {
             <Card className="border-border bg-card">
               <CardContent className="grid gap-3 pt-6 text-sm">
                 <div className="flex justify-between gap-3">
+                  <span className="text-muted-foreground">Modo</span>
+                  <strong>
+                    {inferenceMode === 'remote' ? 'Servidor remoto' : 'Navegador local'}
+                  </strong>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted-foreground">Conectividade</span>
+                  <strong>{connectivity}</strong>
+                </div>
+                <div className="flex justify-between gap-3">
                   <span className="text-muted-foreground">Processamento</span>
-                  <strong>{state.backend === 'webgpu' ? 'GPU local' : state.backend === 'wasm' ? 'CPU local' : '—'}</strong>
+                  <strong>{poseBackendLabel(state.backend)}</strong>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted-foreground">Inferência</span>
+                  <strong>
+                    {state.inferenceMs === null ? '—' : `${state.inferenceMs.toFixed(1)} ms`}
+                  </strong>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted-foreground">RTT</span>
+                  <strong>
+                    {inferenceMode === 'local'
+                      ? 'Não se aplica'
+                      : state.rttMs === null
+                        ? '—'
+                        : `${state.rttMs.toFixed(1)} ms`}
+                  </strong>
                 </div>
                 <div className="flex justify-between gap-3">
                   <span className="text-muted-foreground">Desempenho</span>
@@ -187,9 +270,10 @@ function StationScreen({ auction }: { auction: Auction }) {
             </Card>
 
             <p className="rounded-xl border border-border bg-muted p-4 text-xs leading-relaxed text-muted-foreground">
-              O vídeo permanece nesta máquina. Apenas a imagem curta da primeira mão
-              confirmada é enviada ao celular do pisteiro. A decisão e o lance continuam
-              sendo feitos pelo operador.
+              {inferenceMode === 'remote'
+                ? 'Frames temporários seguem ao servidor privado de inferência e não são persistidos. Apenas a imagem curta da primeira mão confirmada é enviada ao celular do pisteiro.'
+                : 'O vídeo permanece nesta máquina. Apenas a imagem curta da primeira mão confirmada é enviada ao celular do pisteiro.'}{' '}
+              A decisão e o lance continuam sendo feitos pelo operador.
             </p>
           </aside>
         </div>

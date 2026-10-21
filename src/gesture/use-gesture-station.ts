@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react';
 import { listAuctions } from '@/api/auctionsApi';
 import { authStorage } from '@/api/http';
 import {
@@ -10,10 +17,18 @@ import type { Auction } from '@/types/auction';
 import { GestureRoundTracker, type RoundSelection } from './gesture-round-tracker';
 import { createGestureSnapshot } from './gesture-snapshot';
 import {
-  PoseEstimator,
   type PoseBackend,
   type PoseDetectionFrame,
+  type PoseEstimatorPort,
 } from './pose-estimator';
+import { createPoseEstimator } from './pose-estimator-factory';
+import {
+  gestureServerPublicStatus,
+  readGestureServerSettings,
+  saveGestureServerToken,
+  type GestureInferenceMode,
+  type GestureServerSettings,
+} from './gesture-server-settings';
 import type { NormalizedBox, PersonPose } from './pose-types';
 import { ThroughputMonitor, type ThroughputStatus } from './throughput-monitor';
 
@@ -65,6 +80,8 @@ export type GestureDeliveryState =
 export type GestureStationState = {
   phase: 'stopped' | 'starting' | 'running' | 'error';
   backend: PoseBackend | null;
+  inferenceMs: number | null;
+  rttMs: number | null;
   fps: number | null;
   reliable: boolean;
   online: boolean;
@@ -74,11 +91,9 @@ export type GestureStationState = {
   message: string;
 };
 
-type EstimatorPort = Pick<PoseEstimator, 'start' | 'detect' | 'dispose'>;
-
 export type GestureStationDependencies = {
   getUserMedia: (constraints: MediaStreamConstraints) => Promise<MediaStream>;
-  createEstimator: () => EstimatorPort;
+  createEstimator: (settings: GestureServerSettings) => PoseEstimatorPort;
   createBitmap: (source: ImageBitmapSource) => Promise<ImageBitmap>;
   scheduleFrame: (callback: () => void) => number;
   cancelFrame: (handle: number) => void;
@@ -100,7 +115,7 @@ function browserDependencies(): GestureStationDependencies {
       }
       return navigator.mediaDevices.getUserMedia(constraints);
     },
-    createEstimator: () => new PoseEstimator(),
+    createEstimator: createPoseEstimator,
     createBitmap: (source) => createImageBitmap(source),
     scheduleFrame: (callback) => window.requestAnimationFrame(callback),
     cancelFrame: (handle) => window.cancelAnimationFrame(handle),
@@ -115,6 +130,8 @@ function browserDependencies(): GestureStationDependencies {
 const initialState = (): GestureStationState => ({
   phase: 'stopped',
   backend: null,
+  inferenceMs: null,
+  rttMs: null,
   fps: null,
   reliable: true,
   online: typeof navigator === 'undefined' ? true : navigator.onLine,
@@ -158,7 +175,7 @@ export class GestureStationController {
   private state = initialState();
   private generation = 0;
   private stream: MediaStream | null = null;
-  private estimator: EstimatorPort | null = null;
+  private estimator: PoseEstimatorPort | null = null;
   private frameHandle: number | null = null;
   private tracker = new GestureRoundTracker();
   private throughput = new ThroughputMonitor();
@@ -182,7 +199,14 @@ export class GestureStationController {
     this.updateState({ online });
   }
 
-  async start(deviceId: string) {
+  async start(
+    deviceId: string,
+    estimatorSettings: GestureServerSettings = {
+      mode: 'local',
+      serverUrl: '',
+      token: '',
+    },
+  ) {
     const generation = ++this.generation;
     this.releaseResources();
     this.tracker = new GestureRoundTracker();
@@ -191,6 +215,8 @@ export class GestureStationController {
     this.updateState({
       phase: 'starting',
       backend: null,
+      inferenceMs: null,
+      rttMs: null,
       fps: null,
       reliable: true,
       poses: [],
@@ -216,7 +242,7 @@ export class GestureStationController {
         this.endedHandlers.set(track, onEnded);
       }
 
-      const estimator = this.dependencies.createEstimator();
+      const estimator = this.dependencies.createEstimator(estimatorSettings);
       this.estimator = estimator;
       const backend = await estimator.start();
       if (generation !== this.generation) return;
@@ -239,6 +265,8 @@ export class GestureStationController {
     this.updateState({
       phase: 'stopped',
       backend: null,
+      inferenceMs: null,
+      rttMs: null,
       fps: null,
       reliable: true,
       poses: [],
@@ -313,6 +341,8 @@ export class GestureStationController {
   ) {
     this.updateState({
       poses: frame.poses,
+      inferenceMs: frame.inferenceMs,
+      rttMs: frame.rttMs ?? null,
       selectedBox: selection?.personBox ?? null,
       reliable: throughput.reliable,
       ...(throughput.completedWindow ? { fps: throughput.fps } : {}),
@@ -366,7 +396,17 @@ export function useGestureStation(
   const [state, setState] = useState<GestureStationState>(initialState);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState('');
+  const [inferenceMode, setInferenceMode] = useState<GestureInferenceMode>(
+    () => readGestureServerSettings().mode,
+  );
+  const [tokenRevision, setTokenRevision] = useState(0);
   const controllerRef = useRef<GestureStationController | null>(null);
+
+  const activeEstimatorSettings = useMemo(() => {
+    void tokenRevision;
+    return { ...readGestureServerSettings(), mode: inferenceMode };
+  }, [inferenceMode, tokenRevision]);
+  const remoteConfigured = gestureServerPublicStatus(activeEstimatorSettings).configured;
 
   const refreshCameras = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -400,9 +440,9 @@ export function useGestureStation(
       setState,
     );
     controllerRef.current.setOnline(navigator.onLine);
-    await controllerRef.current.start(selectedCameraId);
+    await controllerRef.current.start(selectedCameraId, activeEstimatorSettings);
     await refreshCameras();
-  }, [auctionId, refreshCameras, selectedCameraId, videoRef]);
+  }, [activeEstimatorSettings, auctionId, refreshCameras, selectedCameraId, videoRef]);
 
   const stop = useCallback(() => controllerRef.current?.stop(), []);
 
@@ -410,11 +450,35 @@ export function useGestureStation(
     (deviceId: string) => {
       setSelectedCameraId(deviceId);
       if (state.phase === 'running' && controllerRef.current) {
-        void controllerRef.current.start(deviceId);
+        void controllerRef.current.start(deviceId, activeEstimatorSettings);
       }
+    },
+    [activeEstimatorSettings, state.phase],
+  );
+
+  const selectInferenceMode = useCallback(
+    (mode: GestureInferenceMode) => {
+      if (state.phase === 'starting' || state.phase === 'running') return;
+      setInferenceMode(mode);
     },
     [state.phase],
   );
 
-  return { state, cameras, selectedCameraId, selectCamera, start, stop };
+  const updateRemoteToken = useCallback((token: string) => {
+    saveGestureServerToken(token);
+    setTokenRevision((revision) => revision + 1);
+  }, []);
+
+  return {
+    state,
+    cameras,
+    selectedCameraId,
+    inferenceMode,
+    remoteConfigured,
+    selectCamera,
+    selectInferenceMode,
+    updateRemoteToken,
+    start,
+    stop,
+  };
 }

@@ -1,6 +1,8 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { listAuctions } from '@/api/auctionsApi';
 import { GestureStationApp } from '@/gesture/GestureStationApp';
+import { readGestureServerSettings } from '@/gesture/gesture-server-settings';
 import {
   GestureStationController,
   loadOwnedGestureAuction,
@@ -8,8 +10,11 @@ import {
   type GestureStationState,
 } from '@/gesture/use-gesture-station';
 import type { PoseDetectionFrame, PoseEstimator } from '@/gesture/pose-estimator';
+import type { GestureServerSettings } from '@/gesture/gesture-server-settings';
 import type { PersonPose, PoseKeypoint } from '@/gesture/pose-types';
 import type { Auction } from '@/types/auction';
+
+vi.mock('@/api/auctionsApi', () => ({ listAuctions: vi.fn() }));
 
 const ownedAuction: Auction = {
   id: 'auction-1',
@@ -86,6 +91,18 @@ function fakeVideo() {
 function bitmap() {
   return { width: 1920, height: 1080, close: vi.fn() } as unknown as ImageBitmap;
 }
+
+const localSettings: GestureServerSettings = {
+  mode: 'local',
+  serverUrl: '',
+  token: '',
+};
+
+const remoteSettings: GestureServerSettings = {
+  mode: 'remote',
+  serverUrl: 'ws://10.8.0.1:8765/v1/pose',
+  token: 'runtime-secret',
+};
 
 function controllerHarness(overrides: Partial<GestureStationDependencies> = {}) {
   const firstStream = fakeStream();
@@ -167,6 +184,35 @@ describe('gesture station authorization', () => {
 
     expect(await screen.findByText('Acesso exclusivo do escritório')).toBeInTheDocument();
     expect(getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it('collects the remote token as a per-tab password and renders only safe telemetry', async () => {
+    sessionStorage.setItem('cattleAuctionActorType', 'AUCTION_HOUSE');
+    sessionStorage.setItem('cattleAuctionToken', 'house-token');
+    sessionStorage.setItem(
+      'cattleAuctionHouse',
+      JSON.stringify({ id: 'house-1', name: 'Escritório Pampa' }),
+    );
+    vi.mocked(listAuctions).mockResolvedValueOnce([ownedAuction]);
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { enumerateDevices: vi.fn(() => Promise.resolve([])) },
+    });
+
+    render(<GestureStationApp auctionId="auction-1" />);
+    const mode = await screen.findByLabelText('Modo de inferência');
+    fireEvent.change(mode, { target: { value: 'remote' } });
+    const token = screen.getByLabelText('Token do servidor de gestos');
+
+    expect(token).toHaveAttribute('type', 'password');
+    fireEvent.change(token, { target: { value: 'runtime-secret' } });
+    expect(readGestureServerSettings().token).toBe('runtime-secret');
+    expect(screen.queryByText('runtime-secret')).not.toBeInTheDocument();
+    expect(screen.queryByText(/10\.8\.0\.1/)).not.toBeInTheDocument();
+    expect(screen.getByText('Conectividade')).toBeInTheDocument();
+    expect(screen.getByText('Inferência')).toBeInTheDocument();
+    expect(screen.getByText('RTT')).toBeInTheDocument();
+    expect(screen.getByText('Desempenho')).toBeInTheDocument();
   });
 });
 
@@ -310,5 +356,91 @@ describe('GestureStationController lifecycle', () => {
     await harness.controller.start('');
     expect(secondEstimator.start).toHaveBeenCalledOnce();
     expect(harness.states.at(-1)).toMatchObject({ phase: 'running', backend: 'wasm' });
+  });
+
+  it('offers local mode only after an explicit retry when remote startup fails', async () => {
+    const remoteEstimator = {
+      start: vi.fn(() => Promise.reject(new Error('servidor remoto indisponível'))),
+      detect: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const localEstimator = {
+      start: vi.fn(() => Promise.resolve('webgpu' as const)),
+      detect: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const createEstimator = vi.fn((settings: GestureServerSettings) =>
+      settings.mode === 'remote' ? remoteEstimator : localEstimator,
+    );
+    const harness = controllerHarness({ createEstimator });
+
+    await harness.controller.start('', remoteSettings);
+
+    expect(createEstimator).toHaveBeenCalledTimes(1);
+    expect(createEstimator).toHaveBeenLastCalledWith(remoteSettings);
+    expect(localEstimator.start).not.toHaveBeenCalled();
+    expect(harness.states.at(-1)).toMatchObject({
+      phase: 'error',
+      message: 'servidor remoto indisponível',
+    });
+    expect(JSON.stringify(harness.states)).not.toContain('runtime-secret');
+    expect(JSON.stringify(harness.states)).not.toContain('10.8.0.1');
+
+    await harness.controller.start('', localSettings);
+
+    expect(createEstimator).toHaveBeenCalledTimes(2);
+    expect(localEstimator.start).toHaveBeenCalledOnce();
+    expect(harness.states.at(-1)).toMatchObject({
+      phase: 'running',
+      backend: 'webgpu',
+    });
+  });
+
+  it('stops a remote round on disconnect without changing estimator or emitting an event', async () => {
+    const detection = deferred<PoseDetectionFrame>();
+    const remoteEstimator = {
+      start: vi.fn(() => Promise.resolve('remote-cuda' as const)),
+      detect: vi.fn(() => detection.promise),
+      dispose: vi.fn(),
+    };
+    const createEstimator = vi.fn(() => remoteEstimator);
+    const harness = controllerHarness({ createEstimator });
+    await harness.controller.start('', remoteSettings);
+    harness.scheduled.shift()?.();
+    await flush();
+
+    detection.reject(new Error('Conexão com o servidor de gestos encerrada.'));
+    await flush();
+
+    expect(createEstimator).toHaveBeenCalledOnce();
+    expect(remoteEstimator.dispose).toHaveBeenCalledOnce();
+    expect(harness.dependencies.submitEvent).not.toHaveBeenCalled();
+    expect(harness.states.at(-1)).toMatchObject({
+      phase: 'error',
+      backend: 'remote-cuda',
+      message: 'Conexão com o servidor de gestos encerrada.',
+    });
+  });
+
+  it('publishes inference and RTT telemetry from a processed remote frame', async () => {
+    const harness = controllerHarness();
+    harness.estimator.start.mockResolvedValueOnce('remote-cuda');
+    harness.estimator.detect.mockResolvedValueOnce({
+      sampledAtMs: 100,
+      inferenceMs: 17.2,
+      rttMs: 41.8,
+      poses: [],
+    });
+    await harness.controller.start('', remoteSettings);
+
+    harness.scheduled.shift()?.();
+    await flush();
+
+    expect(harness.states.at(-1)).toMatchObject({
+      phase: 'running',
+      backend: 'remote-cuda',
+      inferenceMs: 17.2,
+      rttMs: 41.8,
+    });
   });
 });

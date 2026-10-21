@@ -18,6 +18,7 @@ export type PoseWorkerRequest =
 export type PoseDetectionFrame = {
   sampledAtMs: number;
   inferenceMs: number;
+  rttMs?: number;
   poses: PersonPose[];
 };
 
