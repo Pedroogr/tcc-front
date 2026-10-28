@@ -54,10 +54,25 @@ type ClientToServerEvents = {
 
 export type StreamSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
+export function resolveSocketServerUrl(apiBase: string, browserOrigin: string) {
+  const normalizedApiBase = apiBase.trim();
+  if (/^https?:\/\//i.test(normalizedApiBase)) {
+    return new URL(normalizedApiBase).origin;
+  }
+  if (normalizedApiBase.startsWith('/')) {
+    return new URL(browserOrigin).origin;
+  }
+  throw new Error('A URL da API precisa ser absoluta ou iniciar com /.');
+}
+
+function socketServerUrl() {
+  return resolveSocketServerUrl(apiUrl, window.location.origin);
+}
+
 export function createStreamSocket(): StreamSocket {
   const token = sessionStorage.getItem(authStorage.tokenKey);
 
-  return io(apiUrl, {
+  return io(socketServerUrl(), {
     auth: token ? { token } : undefined,
     reconnectionAttempts: 6,
     reconnectionDelay: 800,
@@ -163,7 +178,7 @@ export type CommerceSocket = Socket<
 export function createCommerceSocket(): CommerceSocket {
   const token = sessionStorage.getItem(authStorage.tokenKey);
 
-  return io(apiUrl, {
+  return io(socketServerUrl(), {
     auth: token ? { token } : undefined,
     reconnectionAttempts: 6,
     reconnectionDelay: 800,
@@ -172,7 +187,7 @@ export function createCommerceSocket(): CommerceSocket {
 }
 
 export function createOperatorCommerceSocket(token: string): CommerceSocket {
-  return io(apiUrl, {
+  return io(socketServerUrl(), {
     auth: { token },
     reconnectionAttempts: 6,
     reconnectionDelay: 800,
