@@ -3,6 +3,7 @@ import {
   clearGestureServerToken,
   gestureServerPublicStatus,
   readGestureServerSettings,
+  resolveGestureServerUrl,
   saveGestureServerToken,
 } from '@/gesture/gesture-server-settings';
 
@@ -23,6 +24,36 @@ class MemoryStorage {
 }
 
 describe('gesture server session settings', () => {
+  it.each([
+    ['https:', 'demo.trycloudflare.com', 'wss://demo.trycloudflare.com/v1/pose'],
+    ['http:', 'localhost:5173', 'ws://localhost:5173/v1/pose'],
+  ])(
+    'resolves a relative pose endpoint for %s',
+    (protocol, host, expected) => {
+      expect(resolveGestureServerUrl('/v1/pose', { protocol, host })).toBe(
+        expected,
+      );
+    },
+  );
+
+  it('keeps an absolute LAN WebSocket URL unchanged', () => {
+    expect(
+      resolveGestureServerUrl('ws://192.168.15.6:8765/v1/pose', {
+        protocol: 'https:',
+        host: 'demo.trycloudflare.com',
+      }),
+    ).toBe('ws://192.168.15.6:8765/v1/pose');
+  });
+
+  it('rejects a non-absolute endpoint without a leading slash', () => {
+    expect(() =>
+      resolveGestureServerUrl('v1/pose', {
+        protocol: 'https:',
+        host: 'demo.trycloudflare.com',
+      }),
+    ).toThrow('URL');
+  });
+
   it('reads non-secret remote defaults and the per-tab token separately', () => {
     const storage = new MemoryStorage();
     saveGestureServerToken('runtime-secret', storage);
@@ -33,6 +64,7 @@ describe('gesture server session settings', () => {
         VITE_GESTURE_SERVER_URL: 'ws://10.8.0.1:8765/v1/pose',
       },
       storage,
+      { protocol: 'http:', host: 'localhost:5173' },
     );
 
     expect(settings).toEqual({
