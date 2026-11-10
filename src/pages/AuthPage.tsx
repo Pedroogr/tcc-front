@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { UserAccountType } from '@/types/user';
 import { cn } from '@/lib/utils';
+import { getSellerRegistrationGuide } from '@/utils/brFields';
 
 type AuthMode = 'login' | 'register';
 
@@ -85,6 +86,7 @@ export function AuthPage({
   onSellerProfileFieldChange,
 }: AuthPageProps) {
   const isRegisterMode = authMode === 'register';
+  const registrationGuide = getSellerRegistrationGuide(sellerProfileForm.state);
 
   return (
     <main className="relative min-h-dvh overflow-hidden bg-background text-foreground">
@@ -231,7 +233,7 @@ export function AuthPage({
                   type="email"
                   value={userForm.email}
                   onChange={(event) => onUserFieldChange('email', event.target.value)}
-                  placeholder="pedro@email.com"
+                  placeholder="seu@email.com"
                 />
               </label>
 
@@ -340,30 +342,42 @@ export function AuthPage({
                       />
                     </label>
 
-                    <div className="grid gap-5 sm:grid-cols-2">
-                      <label className={labelClassName}>
-                        Inscrição rural
-                        <Input
-                          className={fieldClassName}
-                          value={sellerProfileForm.ruralRegistration}
-                          onChange={(event) =>
-                            onSellerProfileFieldChange('ruralRegistration', event.target.value)
-                          }
-                          placeholder="Registro do produtor"
-                        />
-                      </label>
+                    <div className="grid gap-2">
+                      <div className="grid gap-5 sm:grid-cols-2">
+                        <label className={labelClassName}>
+                          Inscrição rural
+                          <Input
+                            aria-describedby="seller-registration-hint"
+                            className={fieldClassName}
+                            inputMode="numeric"
+                            value={sellerProfileForm.ruralRegistration}
+                            onChange={(event) =>
+                              onSellerProfileFieldChange('ruralRegistration', event.target.value)
+                            }
+                            placeholder={registrationGuide.placeholder ?? 'Registro do produtor'}
+                          />
+                        </label>
 
-                      <label className={labelClassName}>
-                        Inscrição estadual
-                        <Input
-                          className={fieldClassName}
-                          value={sellerProfileForm.stateRegistration}
-                          onChange={(event) =>
-                            onSellerProfileFieldChange('stateRegistration', event.target.value)
-                          }
-                          placeholder="IE"
-                        />
-                      </label>
+                        <label className={labelClassName}>
+                          Inscrição estadual
+                          <Input
+                            aria-describedby="seller-registration-hint"
+                            className={fieldClassName}
+                            inputMode="numeric"
+                            value={sellerProfileForm.stateRegistration}
+                            onChange={(event) =>
+                              onSellerProfileFieldChange('stateRegistration', event.target.value)
+                            }
+                            placeholder={registrationGuide.placeholder ?? 'IE'}
+                          />
+                        </label>
+                      </div>
+                      <p
+                        className="text-xs text-muted-foreground"
+                        id="seller-registration-hint"
+                      >
+                        {registrationGuide.hint}
+                      </p>
                     </div>
 
                     <div className="grid gap-5 sm:grid-cols-[1fr_88px_88px]">

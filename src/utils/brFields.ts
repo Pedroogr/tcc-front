@@ -66,29 +66,82 @@ const stateRegistrationPatterns: Record<string, string> = {
   TO: '##.###.###-#',
 };
 
+const variableStateRegistrationPatterns: Record<string, string[]> = {
+  BA: ['######-##', '#######-##'],
+  PE: ['#######-##', '##.#.###.#######-#'],
+  RN: ['##.###.###-#', '##.#.###.###-#'],
+};
+
+function getStateRegistrationPatterns(state: string) {
+  const uf = state.trim().toUpperCase();
+  const pattern = stateRegistrationPatterns[uf];
+
+  return variableStateRegistrationPatterns[uf] ?? (pattern ? [pattern] : []);
+}
+
+function countPatternDigits(pattern: string) {
+  return Array.from(pattern).filter((character) => character === '#').length;
+}
+
 export function formatStateRegistration(value: string, state: string) {
   const digits = onlyDigits(value);
-  const uf = state.trim().toUpperCase();
-  let pattern = stateRegistrationPatterns[uf];
+  const patterns = getStateRegistrationPatterns(state);
 
-  if (uf === 'BA') {
-    pattern = digits.length <= 8 ? '######-##' : '#######-##';
-  } else if (uf === 'PE') {
-    pattern = digits.length <= 9 ? '#######-##' : '##.#.###.#######-#';
-  } else if (uf === 'RN') {
-    pattern = digits.length <= 9 ? '##.###.###-#' : '##.#.###.###-#';
-  }
-
-  if (!pattern) {
+  if (patterns.length === 0) {
     return digits.slice(0, 14);
   }
+
+  const pattern =
+    patterns.find((candidate) => digits.length <= countPatternDigits(candidate)) ??
+    patterns[patterns.length - 1];
 
   return applyDigitPattern(digits, pattern);
 }
 
+export function getSellerRegistrationGuide(state: string) {
+  const uf = state.trim().toUpperCase();
+  const patterns = getStateRegistrationPatterns(uf);
+
+  if (patterns.length === 0) {
+    return {
+      placeholder: null,
+      hint: 'Preencha o estado para formatar as inscrições.',
+    };
+  }
+
+  const lengths = patterns.map(countPatternDigits).join(' ou ');
+
+  return {
+    placeholder: patterns[0].replace(/#/g, '0'),
+    hint: `Inscrições de ${uf} têm ${lengths} dígitos.`,
+  };
+}
+
+export function validateSellerRegistration(
+  value: string,
+  state: string,
+  label: string,
+) {
+  const digits = onlyDigits(value);
+
+  if (!digits) {
+    return '';
+  }
+
+  const uf = state.trim().toUpperCase();
+  const lengths = getStateRegistrationPatterns(uf).map(countPatternDigits);
+
+  if (lengths.length === 0) {
+    return `Informe o estado para validar a ${label.toLowerCase()}.`;
+  }
+
+  return lengths.includes(digits.length)
+    ? ''
+    : `${label} de ${uf} deve conter ${lengths.join(' ou ')} dígitos.`;
+}
+
 function applyDigitPattern(value: string, pattern: string) {
-  const maxDigits = Array.from(pattern).filter((character) => character === '#').length;
-  const digits = value.slice(0, maxDigits);
+  const digits = value.slice(0, countPatternDigits(pattern));
   let result = '';
   let digitIndex = 0;
 

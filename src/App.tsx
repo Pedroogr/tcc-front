@@ -75,6 +75,7 @@ import {
   validateCnpj,
   validateCpfOrCnpj,
   validatePhone,
+  validateSellerRegistration,
 } from './utils/brFields';
 import { validatePublicEmailDomain } from './utils/email';
 import {
@@ -1332,7 +1333,38 @@ function App() {
   }
 
   function updateSellerProfileField(field: keyof SellerProfileFormState, value: string) {
-    setSellerProfileForm((current) => ({ ...current, [field]: value }));
+    setSellerProfileForm((current) => {
+      if (field === 'ruralRegistration' || field === 'stateRegistration') {
+        return { ...current, [field]: formatStateRegistration(value, current.state) };
+      }
+
+      if (field === 'state') {
+        const state = value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2);
+        return {
+          ...current,
+          state,
+          ruralRegistration: formatStateRegistration(current.ruralRegistration, state),
+          stateRegistration: formatStateRegistration(current.stateRegistration, state),
+        };
+      }
+
+      return { ...current, [field]: value };
+    });
+  }
+
+  function getSellerRegistrationError() {
+    return (
+      validateSellerRegistration(
+        sellerProfileForm.ruralRegistration,
+        sellerProfileForm.state,
+        'Inscrição rural',
+      ) ||
+      validateSellerRegistration(
+        sellerProfileForm.stateRegistration,
+        sellerProfileForm.state,
+        'Inscrição estadual',
+      )
+    );
   }
 
   function updateBuyerProfileField(field: keyof BuyerProfileFormState, value: string) {
@@ -1372,9 +1404,11 @@ function App() {
     const phoneError = validatePhone(userForm.phone);
     const documentError = validateCpfOrCnpj(userForm.document);
     const emailError = await validatePublicEmailDomain(userForm.email);
+    const sellerRegistrationError =
+      accountType === 'SELLER' ? getSellerRegistrationError() : '';
 
-    if (emailError || phoneError || documentError) {
-      setError(emailError || phoneError || documentError);
+    if (emailError || phoneError || documentError || sellerRegistrationError) {
+      setError(emailError || phoneError || documentError || sellerRegistrationError);
       setIsSubmitting(false);
       return;
     }
@@ -1398,8 +1432,8 @@ function App() {
     if (accountType === 'SELLER') {
       payload.sellerProfile = {
         farmName: sellerProfileForm.farmName.trim() || undefined,
-        ruralRegistration: sellerProfileForm.ruralRegistration.trim() || undefined,
-        stateRegistration: sellerProfileForm.stateRegistration.trim() || undefined,
+        ruralRegistration: onlyDigits(sellerProfileForm.ruralRegistration) || undefined,
+        stateRegistration: onlyDigits(sellerProfileForm.stateRegistration) || undefined,
         city: sellerProfileForm.city.trim() || undefined,
         state: sellerProfileForm.state.trim() || undefined,
         country: sellerProfileForm.country.trim() || undefined,
@@ -1640,10 +1674,18 @@ function App() {
     setIsSubmitting(true);
     setError('');
 
+    const registrationError = getSellerRegistrationError();
+
+    if (registrationError) {
+      setError(registrationError);
+      setIsSubmitting(false);
+      return;
+    }
+
     const payload: CreateSellerProfilePayload = {
       farmName: sellerProfileForm.farmName.trim() || undefined,
-      ruralRegistration: sellerProfileForm.ruralRegistration.trim() || undefined,
-      stateRegistration: sellerProfileForm.stateRegistration.trim() || undefined,
+      ruralRegistration: onlyDigits(sellerProfileForm.ruralRegistration) || undefined,
+      stateRegistration: onlyDigits(sellerProfileForm.stateRegistration) || undefined,
       city: sellerProfileForm.city.trim() || undefined,
       state: sellerProfileForm.state.trim() || undefined,
       country: sellerProfileForm.country.trim() || undefined,

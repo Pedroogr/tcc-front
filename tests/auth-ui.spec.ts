@@ -226,6 +226,229 @@ test.describe('authentication UI', () => {
     );
   });
 
+  test('formats and limits seller registrations using the seller UF', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Vendedor' }).click();
+    const rural = page.getByLabel('Inscrição rural');
+    const stateRegistration = page.getByLabel('Inscrição estadual');
+    const uf = page.getByLabel('Estado', { exact: true });
+
+    await uf.fill('rs');
+    await rural.fill('22436587929999999');
+    await stateRegistration.fill('2243658792');
+
+    await expect(rural).toHaveValue('224/3658792');
+    await expect(stateRegistration).toHaveValue('224/3658792');
+    await expect(stateRegistration).toHaveAttribute('placeholder', '000/0000000');
+    await expect(page.getByText('Inscrições de RS têm 10 dígitos.')).toBeVisible();
+
+    await rural.fill('251040852');
+    await stateRegistration.fill('251040852');
+    await uf.fill('sc');
+
+    await expect(rural).toHaveValue('251.040.852');
+    await expect(stateRegistration).toHaveValue('251.040.852');
+    await expect(page.getByText('Inscrições de SC têm 9 dígitos.')).toBeVisible();
+  });
+
+  test('blocks seller registration when a registration is incomplete', async ({
+    context,
+    page,
+  }) => {
+    let registrationRequests = 0;
+    await context.route('**/auth/register', (route) => {
+      registrationRequests += 1;
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: '{}',
+      });
+    });
+
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Vendedor' }).click();
+    await page.getByLabel('Nome completo').fill('Vendedor Novo');
+    await page.getByLabel('E-mail').fill('vendedor@example.com');
+    await page.getByLabel('Senha').fill('senha-segura');
+    await page.getByLabel('Estado', { exact: true }).fill('sp');
+    await page.getByLabel('Inscrição estadual').fill('1100424');
+    await page.getByRole('button', { name: 'Criar conta e entrar' }).click();
+
+    await expect(page.getByRole('alert')).toContainText(
+      'Inscrição estadual de SP deve conter 12 dígitos.',
+    );
+    expect(registrationRequests).toBe(0);
+  });
+
+  test('requires the seller UF when a registration is informed', async ({
+    context,
+    page,
+  }) => {
+    let registrationRequests = 0;
+    await context.route('**/auth/register', (route) => {
+      registrationRequests += 1;
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: '{}',
+      });
+    });
+
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Vendedor' }).click();
+    await page.getByLabel('Nome completo').fill('Vendedor Novo');
+    await page.getByLabel('E-mail').fill('vendedor@example.com');
+    await page.getByLabel('Senha').fill('senha-segura');
+    await page.getByLabel('Inscrição rural').fill('110042490114');
+    await page.getByRole('button', { name: 'Criar conta e entrar' }).click();
+
+    await expect(page.getByRole('alert')).toContainText(
+      'Informe o estado para validar a inscrição rural.',
+    );
+    expect(registrationRequests).toBe(0);
+  });
+
+  test('sends only digits in seller registrations', async ({ context, page }) => {
+    let registrationBody: Record<string, unknown> | undefined;
+    const registeredUser = {
+      id: 'seller-new',
+      name: 'Vendedor Novo',
+      email: 'vendedor@example.com',
+      platformRole: 'USER',
+      status: 'ACTIVE',
+      buyerProfile: null,
+      sellerProfile: {
+        id: 'profile-new',
+        ruralRegistration: '244112330118',
+        stateRegistration: '110042490114',
+        state: 'SP',
+      },
+      createdAt: '2026-11-08T12:00:00.000Z',
+      updatedAt: '2026-11-08T12:00:00.000Z',
+    };
+    await context.route('**/auth/register', async (route) => {
+      registrationBody = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify(registeredUser),
+      });
+    });
+    await context.route('**/auth/login', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          accessToken: 'seller-new-token',
+          actorType: 'USER',
+          user: registeredUser,
+        }),
+      }),
+    );
+    await context.route('http://localhost:3000/auctions**', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+    );
+    await context.route('http://localhost:3000/lots', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+    );
+
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Vendedor' }).click();
+    await page.getByLabel('Nome completo').fill('Vendedor Novo');
+    await page.getByLabel('E-mail').fill('vendedor@example.com');
+    await page.getByLabel('Senha').fill('senha-segura');
+    await page.getByLabel('Estado', { exact: true }).fill('sp');
+    await page.getByLabel('Inscrição rural').fill('244112330118');
+    await page.getByLabel('Inscrição estadual').fill('110042490114');
+    await expect(page.getByLabel('Inscrição estadual')).toHaveValue('110.042.490.114');
+    await page.getByRole('button', { name: 'Criar conta e entrar' }).click();
+
+    await expect.poll(() => registrationBody).toMatchObject({
+      accountType: 'SELLER',
+      sellerProfile: {
+        ruralRegistration: '244112330118',
+        stateRegistration: '110042490114',
+        state: 'SP',
+      },
+    });
+  });
+
+  test('validates registrations in the producer profile page', async ({
+    context,
+    page,
+  }) => {
+    const user = {
+      id: 'user-1',
+      name: 'Usuario Teste',
+      email: 'usuario@example.test',
+      phone: null,
+      document: null,
+      platformRole: 'USER',
+      status: 'ACTIVE',
+      buyerProfile: null,
+      sellerProfile: null,
+      createdAt: '2026-11-08T12:00:00.000Z',
+      updatedAt: '2026-11-08T12:00:00.000Z',
+    };
+    let profileBody: Record<string, unknown> | undefined;
+    await context.route('**/auth/login', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ accessToken: 'user-token', actorType: 'USER', user }),
+      }),
+    );
+    await context.route('**/users/me/seller-profile', async (route) => {
+      profileBody = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ...user,
+          sellerProfile: { id: 'profile-1', ...profileBody },
+        }),
+      });
+    });
+    await context.route('http://localhost:3000/auctions**', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+    );
+    await context.route('http://localhost:3000/lots', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+    );
+
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await page.getByLabel('E-mail').fill(user.email);
+    await page.getByLabel('Senha').fill('user-password');
+    await page.getByRole('button', { name: 'Entrar' }).click();
+    await page.getByRole('button', { name: 'Cadastro de produtor' }).click();
+
+    await page.getByLabel('Estado', { exact: true }).fill('rs');
+    await expect(page.getByText('Inscrições de RS têm 10 dígitos.')).toBeVisible();
+    await expect(page.getByLabel('Inscrição rural')).toHaveAttribute(
+      'placeholder',
+      '000/0000000',
+    );
+
+    await page.getByLabel('Inscrição estadual').fill('224365');
+    await page.getByRole('button', { name: 'Salvar e solicitar lote' }).click();
+    await expect(
+      page.getByText('Inscrição estadual de RS deve conter 10 dígitos.'),
+    ).toBeVisible();
+    expect(profileBody).toBeUndefined();
+
+    await page.getByLabel('Inscrição estadual').fill('2243658792');
+    await expect(page.getByLabel('Inscrição estadual')).toHaveValue('224/3658792');
+    await page.getByRole('button', { name: 'Salvar e solicitar lote' }).click();
+
+    await expect.poll(() => profileBody).toMatchObject({
+      stateRegistration: '2243658792',
+      state: 'RS',
+    });
+  });
+
   test('requires municipality and UF in office invite registration', async ({
     context,
     page,

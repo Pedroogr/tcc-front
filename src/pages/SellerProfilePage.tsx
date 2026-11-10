@@ -2,6 +2,7 @@ import type { FormEvent, ReactNode } from 'react';
 import { BadgeCheck, MapPin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { getSellerRegistrationGuide } from '@/utils/brFields';
 
 type SellerProfileFields = {
   farmName: string;
@@ -36,6 +37,8 @@ export function SellerProfilePage({
   onFieldChange,
   onSubmit,
 }: SellerProfilePageProps) {
+  const registrationGuide = getSellerRegistrationGuide(form.state);
+
   return (
     <section className="mx-auto grid w-full max-w-[1360px] items-start gap-6 px-4 py-7 sm:px-6 sm:py-9 lg:grid-cols-[minmax(0,0.78fr)_minmax(420px,1.22fr)] lg:px-8">
       <div className="flex flex-col gap-5 lg:sticky lg:top-24">
@@ -81,23 +84,32 @@ export function SellerProfilePage({
           />
         </Field>
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Inscrição rural">
-            <Input
-              className="h-11"
-              placeholder="Registro do produtor"
-              value={form.ruralRegistration}
-              onChange={(event) => onFieldChange('ruralRegistration', event.target.value)}
-            />
-          </Field>
-          <Field label="Inscrição estadual">
-            <Input
-              className="h-11"
-              placeholder="IE"
-              value={form.stateRegistration}
-              onChange={(event) => onFieldChange('stateRegistration', event.target.value)}
-            />
-          </Field>
+        <div className="flex flex-col gap-1.5">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Inscrição rural">
+              <Input
+                aria-describedby="producer-registration-hint"
+                className="h-11"
+                inputMode="numeric"
+                placeholder={registrationGuide.placeholder ?? 'Registro do produtor'}
+                value={form.ruralRegistration}
+                onChange={(event) => onFieldChange('ruralRegistration', event.target.value)}
+              />
+            </Field>
+            <Field label="Inscrição estadual">
+              <Input
+                aria-describedby="producer-registration-hint"
+                className="h-11"
+                inputMode="numeric"
+                placeholder={registrationGuide.placeholder ?? 'IE'}
+                value={form.stateRegistration}
+                onChange={(event) => onFieldChange('stateRegistration', event.target.value)}
+              />
+            </Field>
+          </div>
+          <p className="text-xs text-muted-foreground" id="producer-registration-hint">
+            {registrationGuide.hint}
+          </p>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-[1fr_110px_110px]">
